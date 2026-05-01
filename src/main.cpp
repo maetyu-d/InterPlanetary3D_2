@@ -143,6 +143,12 @@ enum class BuildType {
     Hard
 };
 
+enum class SatelliteOrbit {
+    CurrentFace,
+    OppositeFace,
+    Polar
+};
+
 struct Vertex {
     Vec3 position;
     Vec3 normal;
@@ -166,6 +172,13 @@ struct UiVertex {
     float g;
     float b;
     float a;
+};
+
+struct SatelliteCamera {
+    GLuint framebuffer = 0;
+    GLuint color = 0;
+    GLuint depth = 0;
+    int size = 768;
 };
 
 struct World {
@@ -303,6 +316,24 @@ Block blockForBuildType(BuildType type) {
 
 const char* buildTypeName(BuildType type) {
     return type == BuildType::Normal ? "normal" : "hard";
+}
+
+const char* orbitName(SatelliteOrbit orbit) {
+    switch (orbit) {
+        case SatelliteOrbit::CurrentFace: return "current face";
+        case SatelliteOrbit::OppositeFace: return "opposite face";
+        case SatelliteOrbit::Polar: return "polar";
+    }
+    return "current face";
+}
+
+SatelliteOrbit nextOrbit(SatelliteOrbit orbit) {
+    switch (orbit) {
+        case SatelliteOrbit::CurrentFace: return SatelliteOrbit::OppositeFace;
+        case SatelliteOrbit::OppositeFace: return SatelliteOrbit::Polar;
+        case SatelliteOrbit::Polar: return SatelliteOrbit::CurrentFace;
+    }
+    return SatelliteOrbit::CurrentFace;
 }
 
 float buildDuration(BuildType type) {
@@ -514,6 +545,34 @@ void uploadMesh(Mesh& mesh, const std::vector<Vertex>& vertices) {
     glBindVertexArray(0);
 }
 
+void ensureSatelliteCamera(SatelliteCamera& camera) {
+    if (camera.framebuffer != 0) return;
+
+    glGenFramebuffers(1, &camera.framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, camera.framebuffer);
+
+    glGenTextures(1, &camera.color);
+    glBindTexture(GL_TEXTURE_2D, camera.color);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera.size, camera.size, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, camera.color, 0);
+
+    glGenRenderbuffers(1, &camera.depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, camera.depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, camera.size, camera.size);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, camera.depth);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::fprintf(stderr, "Satellite camera framebuffer is incomplete.\n");
+        std::exit(1);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void addFace(std::vector<Vertex>& vertices, int x, int y, int z, Block block, const std::array<Vec3, 4>& corners, Vec3 normal) {
     const auto c = colorOf(block, x, y, z);
     const float kind = blockKind(block);
@@ -543,6 +602,33 @@ void appendCube(std::vector<Vertex>& vertices, const World& world, int x, int y,
         addFace(vertices, x, y, z, block, {{{x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}}}, {0, 0, 1});
     if (transparent(world.get(x, y, z - 1)) && world.get(x, y, z - 1) != block)
         addFace(vertices, x, y, z, block, {{{x1, y0, z0}, {x0, y0, z0}, {x0, y1, z0}, {x1, y1, z0}}}, {0, 0, -1});
+}
+
+void addColoredFace(std::vector<Vertex>& vertices, const std::array<Vec3, 4>& corners, Vec3 normal, std::array<float, 4> color) {
+    const std::array<int, 6> order{0, 1, 2, 0, 2, 3};
+    for (int i : order) {
+        vertices.push_back({corners[i], normal, color[0], color[1], color[2], color[3], 0.0f});
+    }
+}
+
+void addColoredBox(std::vector<Vertex>& vertices, Vec3 min, Vec3 max, std::array<float, 4> color) {
+    addColoredFace(vertices, {{{max.x, min.y, max.z}, {max.x, min.y, min.z}, {max.x, max.y, min.z}, {max.x, max.y, max.z}}}, {1, 0, 0}, color);
+    addColoredFace(vertices, {{{min.x, min.y, min.z}, {min.x, min.y, max.z}, {min.x, max.y, max.z}, {min.x, max.y, min.z}}}, {-1, 0, 0}, color);
+    addColoredFace(vertices, {{{min.x, max.y, max.z}, {max.x, max.y, max.z}, {max.x, max.y, min.z}, {min.x, max.y, min.z}}}, {0, 1, 0}, color);
+    addColoredFace(vertices, {{{min.x, min.y, min.z}, {max.x, min.y, min.z}, {max.x, min.y, max.z}, {min.x, min.y, max.z}}}, {0, -1, 0}, color);
+    addColoredFace(vertices, {{{min.x, min.y, max.z}, {max.x, min.y, max.z}, {max.x, max.y, max.z}, {min.x, max.y, max.z}}}, {0, 0, 1}, color);
+    addColoredFace(vertices, {{{max.x, min.y, min.z}, {min.x, min.y, min.z}, {min.x, max.y, min.z}, {max.x, max.y, min.z}}}, {0, 0, -1}, color);
+}
+
+void rebuildSatelliteMesh(Mesh& satellite, Vec3 position) {
+    std::vector<Vertex> vertices;
+    vertices.reserve(180);
+    addColoredBox(vertices, position + Vec3{-0.42f, -0.24f, -0.32f}, position + Vec3{0.42f, 0.24f, 0.32f}, {0.42f, 0.43f, 0.41f, 1.0f});
+    addColoredBox(vertices, position + Vec3{-0.12f, -0.38f, -0.12f}, position + Vec3{0.12f, -0.24f, 0.12f}, {0.05f, 0.08f, 0.09f, 1.0f});
+    addColoredBox(vertices, position + Vec3{-1.38f, -0.04f, -0.36f}, position + Vec3{-0.48f, 0.04f, 0.36f}, {0.03f, 0.12f, 0.19f, 1.0f});
+    addColoredBox(vertices, position + Vec3{0.48f, -0.04f, -0.36f}, position + Vec3{1.38f, 0.04f, 0.36f}, {0.03f, 0.12f, 0.19f, 1.0f});
+    addColoredBox(vertices, position + Vec3{-0.06f, -0.08f, -0.56f}, position + Vec3{0.06f, 0.08f, -0.34f}, {0.58f, 0.08f, 0.04f, 1.0f});
+    uploadMesh(satellite, vertices);
 }
 
 void rebuildMeshes(const World& world, Mesh& opaque, Mesh& transparentMesh) {
@@ -681,13 +767,37 @@ bool raycastBlock(const World& world, Vec3 origin, Vec3 direction, float maxDist
     return false;
 }
 
+Vec3 satellitePositionAt(float time, SatelliteOrbit orbit) {
+    const Vec3 worldCenter{WorldSize * 0.5f, WorldHeight * 0.5f, WorldSize * 0.5f};
+    const float angle = time * 0.22f;
+    if (orbit == SatelliteOrbit::OppositeFace) {
+        return {
+            worldCenter.x + std::cos(angle) * 25.0f,
+            worldCenter.y - ((WorldHeight + 26.0f) - worldCenter.y) - std::sin(angle * 0.67f) * 4.0f,
+            worldCenter.z + std::sin(angle) * 25.0f
+        };
+    }
+    if (orbit == SatelliteOrbit::Polar) {
+        return {
+            worldCenter.x + std::cos(angle) * 12.0f,
+            worldCenter.y + std::sin(angle) * 66.0f,
+            worldCenter.z + std::cos(angle) * 28.0f
+        };
+    }
+    return {
+        worldCenter.x + std::cos(angle) * 25.0f,
+        WorldHeight + 26.0f + std::sin(angle * 0.67f) * 4.0f,
+        worldCenter.z + std::sin(angle) * 25.0f
+    };
+}
+
 GLuint makeLineVao(GLuint& vbo) {
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 96, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 320, nullptr, GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, nullptr);
     glBindVertexArray(0);
@@ -853,6 +963,77 @@ void drawSelection(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat
     glLineWidth(1.0f);
 }
 
+void drawVoxelScene(GLuint voxelProgram, const Mat4& vp, const Mesh& opaque, const Mesh& transparentMesh, const Mesh* satellite, Vec3 camera, Vec3 headlampDir, float time, float feedClarity = 0.0f) {
+    glUseProgram(voxelProgram);
+    glUniformMatrix4fv(glGetUniformLocation(voxelProgram, "uMVP"), 1, GL_FALSE, vp.m);
+    Mat4 model = identity();
+    glUniformMatrix4fv(glGetUniformLocation(voxelProgram, "uModel"), 1, GL_FALSE, model.m);
+    glUniform3f(glGetUniformLocation(voxelProgram, "uCamera"), camera.x, camera.y, camera.z);
+    glUniform3f(glGetUniformLocation(voxelProgram, "uHeadlampDir"), headlampDir.x, headlampDir.y, headlampDir.z);
+    glUniform3f(glGetUniformLocation(voxelProgram, "uSunDir"), -0.18f, -0.72f, -0.35f);
+    glUniform3f(glGetUniformLocation(voxelProgram, "uFogColor"), 0.12f, 0.105f, 0.095f);
+    glUniform1f(glGetUniformLocation(voxelProgram, "uTime"), time);
+    glUniform1f(glGetUniformLocation(voxelProgram, "uFeedClarity"), feedClarity);
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glBindVertexArray(opaque.vao);
+    glDrawArrays(GL_TRIANGLES, 0, opaque.count);
+
+    if (satellite && satellite->count > 0) {
+        glBindVertexArray(satellite->vao);
+        glDrawArrays(GL_TRIANGLES, 0, satellite->count);
+    }
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glBindVertexArray(transparentMesh.vao);
+    glDrawArrays(GL_TRIANGLES, 0, transparentMesh.count);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+}
+
+void drawOrbitTrail(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat4& vp, float time, SatelliteOrbit orbit) {
+    std::vector<float> data;
+    constexpr int Segments = 128;
+    data.reserve(Segments * 3);
+    const float baseAngle = time * 0.22f;
+    for (int i = 0; i < Segments; ++i) {
+        const float angle = (static_cast<float>(i) / static_cast<float>(Segments)) * Pi * 2.0f;
+        const float orbitTime = (baseAngle + angle) / 0.22f;
+        const Vec3 p = satellitePositionAt(orbitTime, orbit);
+        data.push_back(p.x);
+        data.push_back(p.y);
+        data.push_back(p.z);
+    }
+
+    glUseProgram(lineProgram);
+    glUniformMatrix4fv(glGetUniformLocation(lineProgram, "uMVP"), 1, GL_FALSE, vp.m);
+    glUniform4f(glGetUniformLocation(lineProgram, "uColor"), 0.86f, 0.18f, 0.08f, 0.36f);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(1.5f);
+    glDrawArrays(GL_LINE_LOOP, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
+void drawSatelliteFeed(GLuint textureProgram, GLuint texture, int width, int height) {
+    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
+    const float margin = 18.0f;
+    const float x0 = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
+    const float y0 = (static_cast<float>(height) - pixels - margin) / static_cast<float>(height);
+    const float x1 = (static_cast<float>(width) - margin) / static_cast<float>(width);
+    const float y1 = (static_cast<float>(height) - margin) / static_cast<float>(height);
+    glUseProgram(textureProgram);
+    glUniform4f(glGetUniformLocation(textureProgram, "uRect"), x0, y0, x1, y1);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(glGetUniformLocation(textureProgram, "uTexture"), 0);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
 void cursorCallback(GLFWwindow*, double xpos, double ypos) {
     if (!mouseCaptured) return;
     if (firstMouse) {
@@ -892,7 +1073,7 @@ void main() {
     vNormal = mat3(uModel) * aNormal;
     vColor = aColor;
     vKind = aKind;
-    gl_Position = uMVP * vec4(aPos, 1.0);
+    gl_Position = uMVP * world;
 }
 )GLSL";
 
@@ -907,6 +1088,7 @@ uniform vec3 uHeadlampDir;
 uniform vec3 uSunDir;
 uniform vec3 uFogColor;
 uniform float uTime;
+uniform float uFeedClarity;
 out vec4 FragColor;
 
 float hash(vec3 p) {
@@ -1020,6 +1202,7 @@ void main() {
     float sky = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
     float rim = pow(max(1.0 - dot(normalize(uCamera - vWorldPos), n), 0.0), 2.0) * 0.08;
     vec3 light = vec3(0.12, 0.12, 0.13) + vec3(0.50, 0.51, 0.50) * sun * 0.42 + vec3(0.16, 0.17, 0.18) * sky * 0.18 + rim;
+    light += vec3(0.18, 0.20, 0.19) * uFeedClarity;
     vec3 toPoint = vWorldPos - uCamera;
     float lampDistance = length(toPoint);
     vec3 lampRay = normalize(toPoint);
@@ -1033,14 +1216,15 @@ void main() {
     if (kind == 10.0) color += base * 0.38;
     if (kind == 11.0) color += base * 0.30;
     float distanceToEye = length(uCamera - vWorldPos);
-    float distanceFog = smoothstep(18.0, 70.0, distanceToEye);
-    float lowFog = (1.0 - smoothstep(4.0, 24.0, vWorldPos.y)) * smoothstep(5.0, 45.0, distanceToEye);
+    float distanceFog = smoothstep(18.0, 70.0, distanceToEye) * mix(1.0, 0.28, uFeedClarity);
+    float lowFog = (1.0 - smoothstep(4.0, 24.0, vWorldPos.y)) * smoothstep(5.0, 45.0, distanceToEye) * mix(1.0, 0.18, uFeedClarity);
     float ashBands = smoothstep(0.38, 0.72, noise(vec3(vWorldPos.xz * 0.085, 3.0))) * distanceFog;
     vec3 hotHorizon = vec3(0.46, 0.085, 0.030);
     vec3 ashFog = mix(uFogColor, vec3(0.13, 0.12, 0.11), lowFog * 0.90 + ashBands * 0.45);
     vec3 fogColor = mix(ashFog, hotHorizon, smoothstep(24.0, 80.0, distanceToEye) * (1.0 - smoothstep(0.0, 18.0, vWorldPos.y)) * 0.32);
     float fog = clamp(distanceFog + lowFog * 0.56 + ashBands * 0.26, 0.0, 0.985);
     color = mix(color, fogColor, fog);
+    color = mix(color, pow(color * 1.55, vec3(0.88)), uFeedClarity);
     FragColor = vec4(color, alpha);
 }
 )GLSL";
@@ -1156,6 +1340,42 @@ void main() {
 }
 )GLSL";
 
+const char* textureVertexShader = R"GLSL(
+#version 330 core
+uniform vec4 uRect;
+out vec2 vUV;
+void main() {
+    vec2 corners[6] = vec2[6](
+        vec2(uRect.x, uRect.y), vec2(uRect.z, uRect.y), vec2(uRect.z, uRect.w),
+        vec2(uRect.x, uRect.y), vec2(uRect.z, uRect.w), vec2(uRect.x, uRect.w)
+    );
+    vec2 uvs[6] = vec2[6](
+        vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 0.0),
+        vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, 0.0)
+    );
+    vec2 p = corners[gl_VertexID];
+    vUV = uvs[gl_VertexID];
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)GLSL";
+
+const char* textureFragmentShader = R"GLSL(
+#version 330 core
+in vec2 vUV;
+uniform sampler2D uTexture;
+out vec4 FragColor;
+void main() {
+    vec3 color = texture(uTexture, vUV).rgb;
+    vec2 edge = min(vUV, 1.0 - vUV);
+    float frame = 1.0 - smoothstep(0.012, 0.020, min(edge.x, edge.y));
+    float scan = sin(vUV.y * 760.0) * 0.006;
+    color = pow(max(color, vec3(0.0)), vec3(0.82)) * 1.32 + scan;
+    color = mix(vec3(0.5), color, 1.18);
+    color = mix(color, vec3(0.015, 0.018, 0.016), frame * 0.62);
+    FragColor = vec4(color, 1.0);
+}
+)GLSL";
+
 } // namespace
 
 int main() {
@@ -1187,15 +1407,19 @@ int main() {
     GLuint skyProgram = makeProgram(skyVertexShader, skyFragmentShader);
     GLuint lineProgram = makeProgram(lineVertexShader, lineFragmentShader);
     GLuint uiProgram = makeProgram(uiVertexShader, uiFragmentShader);
+    GLuint textureProgram = makeProgram(textureVertexShader, textureFragmentShader);
     GLuint emptyVao = 0;
     glGenVertexArrays(1, &emptyVao);
     GLuint lineVbo = 0;
     GLuint lineVao = makeLineVao(lineVbo);
     GLuint uiVbo = 0;
     GLuint uiVao = makeUiVao(uiVbo);
+    SatelliteCamera satelliteCamera;
+    ensureSatelliteCamera(satelliteCamera);
 
     Mesh opaque;
     Mesh transparentMesh;
+    Mesh satelliteMesh;
     rebuildMeshes(world, opaque, transparentMesh);
 
     BuildType selectedBuild = BuildType::Normal;
@@ -1205,6 +1429,7 @@ int main() {
     float miningTimer = 0.0f;
     float buildingTimer = 0.0f;
     float buildCooldown = 0.0f;
+    SatelliteOrbit satelliteOrbit = SatelliteOrbit::CurrentFace;
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -1224,6 +1449,7 @@ int main() {
         }
         if (keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
         if (keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
+        if (keyPressed(GLFW_KEY_O)) satelliteOrbit = nextOrbit(satelliteOrbit);
         if (keyPressed(GLFW_KEY_R)) {
             world.seed += 1337;
             generateWorld(world);
@@ -1234,6 +1460,9 @@ int main() {
         updatePlayer(world, player, dt);
         const Vec3 eye{player.position.x, player.position.y + PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
+        const Vec3 worldCenter{WorldSize * 0.5f, WorldHeight * 0.5f, WorldSize * 0.5f};
+        const Vec3 satellitePosition = satellitePositionAt(static_cast<float>(now), satelliteOrbit);
+        rebuildSatelliteMesh(satelliteMesh, satellitePosition);
 
         Vec3 hit{};
         Vec3 previous{};
@@ -1288,6 +1517,21 @@ int main() {
         int width = 1;
         int height = 1;
         glfwGetFramebufferSize(window, &width, &height);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, satelliteCamera.framebuffer);
+        glViewport(0, 0, satelliteCamera.size, satelliteCamera.size);
+        glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        const Mat4 satelliteProj = perspective(42.0f * Pi / 180.0f, 1.0f, 0.2f, 150.0f);
+        const Vec3 satelliteLookTarget = satelliteOrbit == SatelliteOrbit::Polar
+            ? worldCenter
+            : Vec3{satellitePosition.x, worldCenter.y, satellitePosition.z};
+        const Vec3 satelliteDown = normalize(satelliteLookTarget - satellitePosition);
+        const Mat4 satelliteView = lookAt(satellitePosition, satelliteLookTarget, {0.0f, 0.0f, -1.0f});
+        const Mat4 satelliteVp = multiply(satelliteProj, satelliteView);
+        drawVoxelScene(voxelProgram, satelliteVp, opaque, transparentMesh, nullptr, satellitePosition, satelliteDown, static_cast<float>(now), 1.0f);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -1302,27 +1546,10 @@ int main() {
         const Mat4 view = lookAt(eye, eye + look, {0.0f, 1.0f, 0.0f});
         const Mat4 vp = multiply(proj, view);
 
-        glUseProgram(voxelProgram);
-        glUniformMatrix4fv(glGetUniformLocation(voxelProgram, "uMVP"), 1, GL_FALSE, vp.m);
-        Mat4 model = identity();
-        glUniformMatrix4fv(glGetUniformLocation(voxelProgram, "uModel"), 1, GL_FALSE, model.m);
-        glUniform3f(glGetUniformLocation(voxelProgram, "uCamera"), eye.x, eye.y, eye.z);
-        glUniform3f(glGetUniformLocation(voxelProgram, "uHeadlampDir"), look.x, look.y, look.z);
-        glUniform3f(glGetUniformLocation(voxelProgram, "uSunDir"), -0.18f, -0.72f, -0.35f);
-        glUniform3f(glGetUniformLocation(voxelProgram, "uFogColor"), 0.12f, 0.105f, 0.095f);
-        glUniform1f(glGetUniformLocation(voxelProgram, "uTime"), static_cast<float>(now));
-
-        glDisable(GL_BLEND);
-        glDepthMask(GL_TRUE);
-        glBindVertexArray(opaque.vao);
-        glDrawArrays(GL_TRIANGLES, 0, opaque.count);
-
+        drawVoxelScene(voxelProgram, vp, opaque, transparentMesh, &satelliteMesh, eye, look, static_cast<float>(now));
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE);
-        glBindVertexArray(transparentMesh.vao);
-        glDrawArrays(GL_TRIANGLES, 0, transparentMesh.count);
-        glDepthMask(GL_TRUE);
+        drawOrbitTrail(lineProgram, lineVao, lineVbo, vp, static_cast<float>(now), satelliteOrbit);
         glDisable(GL_BLEND);
 
         float interactionProgress = 0.0f;
@@ -1344,13 +1571,16 @@ int main() {
         glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glBindVertexArray(emptyVao);
+        drawSatelliteFeed(textureProgram, satelliteCamera.color, width, height);
         drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, interactionProgress, static_cast<float>(now));
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
         const std::string title = "Dead Cube World - " + std::to_string(opaque.count / 6) + " bleak faces - build: "
-            + buildTypeName(selectedBuild) + " - seed " + std::to_string(world.seed) + " - hold click to mine/build";
+            + buildTypeName(selectedBuild) + " - sat: " + orbitName(satelliteOrbit)
+            + " - seed " + std::to_string(world.seed) + " - hold click to mine/build";
         glfwSetWindowTitle(window, title.c_str());
         glfwSwapBuffers(window);
     }
