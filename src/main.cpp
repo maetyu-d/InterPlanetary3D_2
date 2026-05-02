@@ -478,10 +478,17 @@ Block cubeFaceMaterial(int depth, int height, int u, int v, int face, int seed) 
     const float vein = fractalNoise((u + depth * 3) / 7.0f, (v - depth * 2) / 7.0f, seed + profile * 503 + 99);
     const float resourceA = fractalNoise((u + profile * 19) / 5.5f, (v + depth * 2) / 5.5f, seed + profile * 701 + 211);
     const float resourceB = fractalNoise((u - depth * 3) / 6.5f, (v + profile * 23) / 6.5f, seed + profile * 701 + 409);
+    if (depth <= 2) {
+        const float surfaceFuel = fractalNoise(u / 6.2f + 13.0f, v / 6.2f - 9.0f, seed + profile * 839 + 17);
+        const float surfacePlutonium = fractalNoise(u / 7.0f - 21.0f, v / 7.0f + 5.0f, seed + profile * 839 + 71);
+        const float fleck = hash2(u + depth * 31, v - depth * 19, seed + profile * 1181);
+        if (surfacePlutonium > 0.855f && fleck > 0.62f) return Block::Plutonium;
+        if (surfaceFuel > 0.875f && fleck > 0.68f) return Block::Fuel;
+    }
     if (depth >= 5 && depth <= 11) {
         const float fleck = hash2(u + depth * 13, v - depth * 7, seed + profile * 997);
-        if (resourceB > 0.835f && fleck > 0.74f) return Block::Plutonium;
-        if (resourceA > 0.815f && fleck > 0.64f) return Block::Fuel;
+        if (resourceB > 0.845f && fleck > 0.68f) return Block::Plutonium;
+        if (resourceA > 0.855f && fleck > 0.72f) return Block::Fuel;
     }
     if (depth == 0) {
         if (height < 10) return hash2(u, v, seed + profile * 17 + 91) > 0.68f ? Block::ObsidianGlass : Block::Ash;
@@ -1184,7 +1191,7 @@ SatelliteView makeSatelliteView(Vec3 position) {
     view.position = position;
     view.target = closestPointOnPlanetCube(position);
     view.down = normalize(view.target - view.position);
-    view.up = std::abs(dot(view.down, {0.0f, 1.0f, 0.0f})) > 0.92f ? Vec3{0.0f, 0.0f, -1.0f} : Vec3{0.0f, 1.0f, 0.0f};
+    view.up = {1.0f, 0.0f, 0.0f};
     const Mat4 proj = perspective(46.0f * Pi / 180.0f, 1.0f, 0.2f, 180.0f);
     const Mat4 camera = lookAt(view.position, view.target, view.up);
     view.vp = multiply(proj, camera);
@@ -1332,6 +1339,89 @@ void drawReticle(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool guided, floa
     addUiRect(vertices, cx - thick * 0.5f, cy + gap, thick, len, color);
     addUiRect(vertices, cx - gap - len, cy - thick * 0.5f, len, thick, color);
     addUiRect(vertices, cx + gap, cy - thick * 0.5f, len, thick, color);
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
+void drawSmallReticle(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool alternatePalette = false) {
+    const std::array<float, 4> color = alternatePalette
+        ? std::array<float, 4>{0.25f, 0.62f, 1.0f, 0.82f}
+        : std::array<float, 4>{0.78f, 0.92f, 0.82f, 0.78f};
+    std::vector<UiVertex> vertices;
+    vertices.reserve(30);
+    const float cx = 0.5f;
+    const float cy = 0.5f;
+    const float gap = 0.008f;
+    const float len = 0.015f;
+    const float thick = 0.0025f;
+    addUiRect(vertices, cx - thick * 0.5f, cy - gap - len, thick, len, color);
+    addUiRect(vertices, cx - thick * 0.5f, cy + gap, thick, len, color);
+    addUiRect(vertices, cx - gap - len, cy - thick * 0.5f, len, thick, color);
+    addUiRect(vertices, cx + gap, cy - thick * 0.5f, len, thick, color);
+    addUiRect(vertices, cx - thick * 0.5f, cy - thick * 0.5f, thick, thick, {color[0], color[1], color[2], 0.55f});
+
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
+void addHudDigit(std::vector<UiVertex>& vertices, float x, float y, float size, int digit, std::array<float, 4> color) {
+    const float t = size * 0.16f;
+    const float w = size * 0.62f;
+    const float h = size;
+    if (digit == 1) {
+        addUiRect(vertices, x + w * 0.45f, y, t, h, color);
+        addUiRect(vertices, x + w * 0.18f, y + h * 0.82f, w * 0.34f, t, color);
+        addUiRect(vertices, x + w * 0.20f, y + h - t, w * 0.66f, t, color);
+    } else {
+        addUiRect(vertices, x, y, w, t, color);
+        addUiRect(vertices, x + w - t, y, t, h * 0.50f, color);
+        addUiRect(vertices, x, y + h * 0.42f, w, t, color);
+        addUiRect(vertices, x, y + h * 0.42f, t, h * 0.50f, color);
+        addUiRect(vertices, x, y + h - t, w, t, color);
+    }
+}
+
+bool projectToUi(const Mat4& m, Vec3 p, Vec2& out) {
+    const float x = m.m[0] * p.x + m.m[4] * p.y + m.m[8] * p.z + m.m[12];
+    const float y = m.m[1] * p.x + m.m[5] * p.y + m.m[9] * p.z + m.m[13];
+    const float w = m.m[3] * p.x + m.m[7] * p.y + m.m[11] * p.z + m.m[15];
+    if (std::abs(w) < 0.0001f) return false;
+    const float nx = x / w;
+    const float ny = y / w;
+    out = {nx * 0.5f + 0.5f, 0.5f - ny * 0.5f};
+    return w > 0.0f;
+}
+
+void drawSatellitePositionLabels(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Mat4& satelliteVp, const Player& playerOne, const Player& playerTwo, int width, int height) {
+    std::vector<UiVertex> vertices;
+    vertices.reserve(120);
+    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
+    const float margin = 18.0f;
+    const float panelX = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
+    const float panelY = margin / static_cast<float>(height);
+    const float panelW = pixels / static_cast<float>(width);
+    const float panelH = pixels / static_cast<float>(height);
+    auto addLabel = [&vertices, &satelliteVp, panelX, panelY, panelW, panelH](const Player& player, int digit, std::array<float, 4> color) {
+        const Vec3 head = player.position + Vec3{0.0f, player.upSign * (PlayerHeight + 3.8f), 0.0f};
+        Vec2 pos{};
+        if (!projectToUi(satelliteVp, head, pos)) return;
+        pos.x = panelX + std::clamp(pos.x, 0.06f, 0.88f) * panelW;
+        pos.y = panelY + std::clamp(pos.y, 0.06f, 0.84f) * panelH;
+        const float size = 0.086f;
+        addUiRect(vertices, pos.x - 0.022f, pos.y - 0.018f, 0.080f, 0.108f, {0.0f, 0.0f, 0.0f, 0.54f});
+        addHudDigit(vertices, pos.x, pos.y, size, digit, color);
+        addUiRect(vertices, pos.x - 0.016f, pos.y + 0.096f, 0.074f, 0.006f, {color[0], color[1], color[2], 0.82f});
+    };
+    addLabel(playerOne, 1, {1.0f, 0.30f, 0.08f, 0.98f});
+    addLabel(playerTwo, 2, {0.15f, 0.55f, 1.0f, 0.98f});
     glUseProgram(uiProgram);
     glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
@@ -1599,9 +1689,10 @@ void drawPlanetCubeWireframe(const LineUniforms& lineUniforms, GLuint lineVao, G
 }
 
 void drawSatellitePlayerTracker(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 playerPosition, float upSign, std::array<float, 4> color) {
-    const Vec3 center = playerPosition + Vec3{0.0f, upSign * PlayerHeight * 0.5f, 0.0f};
-    const float radius = 1.55f;
-    const float height = PlayerHeight + 0.9f;
+    const Vec3 head = playerPosition + Vec3{0.0f, upSign * (PlayerHeight + 0.35f), 0.0f};
+    const Vec3 center = head + Vec3{0.0f, upSign * 0.55f, 0.0f};
+    const float radius = 1.15f;
+    const float height = 2.65f;
     std::vector<float> data;
     data.reserve(3 * 180);
     auto addLine = [&data](Vec3 a, Vec3 b) {
@@ -1617,11 +1708,11 @@ void drawSatellitePlayerTracker(const LineUniforms& lineUniforms, GLuint lineVao
                 center + Vec3{std::cos(a1) * radius, 0.0f, std::sin(a1) * radius});
     }
 
-    addLine(center + Vec3{-radius * 1.45f, 0.0f, 0.0f}, center + Vec3{radius * 1.45f, 0.0f, 0.0f});
-    addLine(center + Vec3{0.0f, 0.0f, -radius * 1.45f}, center + Vec3{0.0f, 0.0f, radius * 1.45f});
-    addLine(center + Vec3{0.0f, -upSign * height * 0.5f, 0.0f}, center + Vec3{0.0f, upSign * height * 0.5f, 0.0f});
+    addLine(center + Vec3{-radius * 1.65f, 0.0f, 0.0f}, center + Vec3{radius * 1.65f, 0.0f, 0.0f});
+    addLine(center + Vec3{0.0f, 0.0f, -radius * 1.65f}, center + Vec3{0.0f, 0.0f, radius * 1.65f});
+    addLine(head, center + Vec3{0.0f, upSign * height, 0.0f});
 
-    const Vec3 top = center + Vec3{0.0f, upSign * height * 0.5f, 0.0f};
+    const Vec3 top = center + Vec3{0.0f, upSign * height, 0.0f};
     addLine(top, top + Vec3{radius * 0.65f, upSign * 0.75f, 0.0f});
     addLine(top, top + Vec3{-radius * 0.65f, upSign * 0.75f, 0.0f});
     addLine(top, top + Vec3{0.0f, upSign * 0.75f, radius * 0.65f});
@@ -1816,17 +1907,17 @@ void main() {
     } else if (kind == 10.0) {
         float pulse = smoothstep(0.34, 0.92, fbm(p * 5.0));
         float vein = cracks(p * 0.82);
-        base = mix(vec3(0.01, 0.14, 0.38), vec3(0.08, 0.82, 1.0), pulse);
-        base += vec3(0.12, 0.70, 1.0) * vein * 0.45;
+        base = mix(vec3(0.00, 0.18, 0.58), vec3(0.00, 0.95, 1.0), pulse);
+        base += vec3(0.18, 0.90, 1.0) * vein * 0.85;
     } else if (kind == 11.0) {
         float grit = smoothstep(0.42, 0.88, fbm(p * 6.0));
         float vein = cracks(p * 0.95);
-        base = mix(vec3(0.25, 0.32, 0.02), vec3(0.92, 1.0, 0.04), grit);
-        base += vec3(0.80, 1.0, 0.10) * vein * 0.35;
+        base = mix(vec3(0.36, 0.48, 0.00), vec3(1.0, 1.0, 0.00), grit);
+        base += vec3(0.95, 1.0, 0.06) * vein * 0.72;
     }
 
     float grey = dot(base, vec3(0.299, 0.587, 0.114));
-    base = mix(vec3(grey), base, kind >= 10.0 ? 0.94 : 0.28);
+    base = mix(vec3(grey), base, kind >= 10.0 ? 1.0 : 0.28);
 
     vec3 local = abs(fract(p) - 0.5);
     float edge = 1.0 - smoothstep(0.38, 0.50, max(max(local.x, local.y), local.z));
@@ -1848,8 +1939,8 @@ void main() {
     vec3 headlamp = vec3(0.92, 0.94, 0.86) * (cone * 2.90 + spill * 2.0) * facing * falloff;
     light += headlamp;
     vec3 color = pow(base * light * faceAO, vec3(0.95));
-    if (kind == 10.0) color += base * 0.38;
-    if (kind == 11.0) color += base * 0.30;
+    if (kind == 10.0) color += base * 1.15 + vec3(0.0, 0.35, 0.55) * edge;
+    if (kind == 11.0) color += base * 0.95 + vec3(0.45, 0.55, 0.0) * edge;
     float distanceToEye = length(uCamera - vWorldPos);
     float distanceFog = smoothstep(18.0, 70.0, distanceToEye) * mix(1.0, 0.28, uFeedClarity);
     float lowFog = (1.0 - smoothstep(4.0, 24.0, vWorldPos.y)) * smoothstep(5.0, 45.0, distanceToEye) * mix(1.0, 0.18, uFeedClarity);
@@ -1859,6 +1950,8 @@ void main() {
     vec3 fogColor = mix(ashFog, hotHorizon, smoothstep(24.0, 80.0, distanceToEye) * (1.0 - smoothstep(0.0, 18.0, vWorldPos.y)) * 0.32);
     float fog = clamp(distanceFog + lowFog * 0.56 + ashBands * 0.26, 0.0, 0.985);
     color = mix(color, fogColor, fog);
+    if (kind == 10.0) color = mix(color, vec3(0.00, 0.92, 1.0), 0.34);
+    if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.30);
     color = mix(color, pow(color * 1.55, vec3(0.88)), uFeedClarity);
     FragColor = vec4(color, alpha);
 }
@@ -1877,12 +1970,12 @@ void main() {
     vec3 base = vColor.rgb;
     float kind = floor(vKind + 0.5);
     float grey = dot(base, vec3(0.299, 0.587, 0.114));
-    base = mix(vec3(grey), base, kind >= 10.0 ? 0.65 : 0.05);
+    base = mix(vec3(grey), base, kind >= 10.0 ? 1.0 : 0.05);
     float light = 0.44 + max(dot(n, normalize(vec3(-0.35, 0.75, -0.25))), 0.0) * 0.48;
     float grid = 1.0 - smoothstep(0.45, 0.50, max(max(abs(fract(vWorldPos.x) - 0.5), abs(fract(vWorldPos.y) - 0.5)), abs(fract(vWorldPos.z) - 0.5)));
     vec3 color = base * light + grid * 0.030;
-    if (kind == 10.0) color += vec3(0.00, 0.35, 0.55);
-    if (kind == 11.0) color += vec3(0.38, 0.44, 0.00);
+    if (kind == 10.0) color = mix(color, vec3(0.00, 0.92, 1.0), 0.72) + vec3(0.00, 0.45, 0.70) * grid;
+    if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.68) + vec3(0.50, 0.55, 0.00) * grid;
     float dist = length(uCamera - vWorldPos);
     color *= 1.0 - smoothstep(70.0, 145.0, dist) * 0.35;
     FragColor = vec4(color, 1.0);
@@ -2266,6 +2359,8 @@ int main() {
         int width = 1;
         int height = 1;
         glfwGetFramebufferSize(window, &width, &height);
+        const SatelliteView liveSatelliteView = makeSatelliteView(satellitePosition);
+        const SatelliteView liveSatelliteViewTwo = makeSatelliteView(satellitePositionTwo);
 
         const bool missileCameraActive = rocket.active && rocket.age >= 1.0f;
         if (satelliteFeedDirty || missileCameraActive || now - lastSatelliteFeedTime >= 0.12) {
@@ -2294,6 +2389,7 @@ int main() {
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 drawPlanetCubeWireframe(lineUniform, lineVao, lineVbo, satelliteView.vp);
+                drawSatellitePlayerTracker(lineUniform, lineVao, lineVbo, satelliteView.vp, player.position, player.upSign, {1.0f, 0.30f, 0.08f, 0.95f});
                 drawSatellitePlayerTracker(lineUniform, lineVao, lineVbo, satelliteView.vp, playerTwo.position, playerTwo.upSign, {0.15f, 0.55f, 1.0f, 0.95f});
                 glDisable(GL_BLEND);
                 glEnable(GL_DEPTH_TEST);
@@ -2315,6 +2411,7 @@ int main() {
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             drawPlanetCubeWireframe(lineUniform, lineVao, lineVbo, satelliteViewTwo.vp);
             drawSatellitePlayerTracker(lineUniform, lineVao, lineVbo, satelliteViewTwo.vp, player.position, player.upSign, {1.0f, 0.30f, 0.08f, 0.95f});
+            drawSatellitePlayerTracker(lineUniform, lineVao, lineVbo, satelliteViewTwo.vp, playerTwo.position, playerTwo.upSign, {0.15f, 0.55f, 1.0f, 0.95f});
             glDisable(GL_BLEND);
             glEnable(GL_DEPTH_TEST);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -2367,7 +2464,9 @@ int main() {
         if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, leftWidth, height);
         else drawSatelliteFeed(textureUniform, satelliteCamera.color, leftWidth, height, static_cast<float>(now));
         if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, leftWidth, height, static_cast<float>(now));
+        else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, leftWidth, height);
         if (rocketLauncherArmed || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, static_cast<float>(now));
+        else drawSmallReticle(uiProgram, uiVao, uiVbo);
         drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, rocketLauncherArmed, interactionProgress, static_cast<float>(now));
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
@@ -2399,6 +2498,8 @@ int main() {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindVertexArray(emptyVao);
         drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, rightWidth, height, static_cast<float>(now));
+        drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, rightWidth, height);
+        drawSmallReticle(uiProgram, uiVao, uiVbo, true);
         drawHand(uiProgram, uiVao, uiVbo, false, false, false, 0.0f, static_cast<float>(now), true);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
