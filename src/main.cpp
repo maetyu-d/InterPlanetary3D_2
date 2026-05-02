@@ -178,7 +178,7 @@ struct SatelliteCamera {
     GLuint framebuffer = 0;
     GLuint color = 0;
     GLuint depth = 0;
-    int size = 768;
+    int size = 360;
 };
 
 struct World {
@@ -963,7 +963,7 @@ void drawSelection(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat
     glLineWidth(1.0f);
 }
 
-void drawVoxelScene(GLuint voxelProgram, const Mat4& vp, const Mesh& opaque, const Mesh& transparentMesh, const Mesh* satellite, Vec3 camera, Vec3 headlampDir, float time, float feedClarity = 0.0f) {
+void drawVoxelScene(GLuint voxelProgram, const Mat4& vp, const Mesh& opaque, const Mesh& transparentMesh, const Mesh* satellite, Vec3 camera, Vec3 headlampDir, float time, float feedClarity = 0.0f, bool drawTransparent = true) {
     glUseProgram(voxelProgram);
     glUniformMatrix4fv(glGetUniformLocation(voxelProgram, "uMVP"), 1, GL_FALSE, vp.m);
     Mat4 model = identity();
@@ -985,13 +985,15 @@ void drawVoxelScene(GLuint voxelProgram, const Mat4& vp, const Mesh& opaque, con
         glDrawArrays(GL_TRIANGLES, 0, satellite->count);
     }
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
-    glBindVertexArray(transparentMesh.vao);
-    glDrawArrays(GL_TRIANGLES, 0, transparentMesh.count);
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
+    if (drawTransparent) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glBindVertexArray(transparentMesh.vao);
+        glDrawArrays(GL_TRIANGLES, 0, transparentMesh.count);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
 }
 
 void drawOrbitTrail(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat4& vp, float time, SatelliteOrbit orbit) {
@@ -1229,6 +1231,31 @@ void main() {
 }
 )GLSL";
 
+const char* satelliteFragmentShader = R"GLSL(
+#version 330 core
+in vec3 vWorldPos;
+in vec3 vNormal;
+in vec4 vColor;
+in float vKind;
+uniform vec3 uCamera;
+out vec4 FragColor;
+void main() {
+    vec3 n = normalize(vNormal);
+    vec3 base = vColor.rgb;
+    float kind = floor(vKind + 0.5);
+    float grey = dot(base, vec3(0.299, 0.587, 0.114));
+    base = mix(vec3(grey), base, kind >= 10.0 ? 0.65 : 0.05);
+    float light = 0.44 + max(dot(n, normalize(vec3(-0.35, 0.75, -0.25))), 0.0) * 0.48;
+    float grid = 1.0 - smoothstep(0.45, 0.50, max(max(abs(fract(vWorldPos.x) - 0.5), abs(fract(vWorldPos.y) - 0.5)), abs(fract(vWorldPos.z) - 0.5)));
+    vec3 color = base * light + grid * 0.030;
+    if (kind == 10.0) color += vec3(0.00, 0.35, 0.55);
+    if (kind == 11.0) color += vec3(0.38, 0.44, 0.00);
+    float dist = length(uCamera - vWorldPos);
+    color *= 1.0 - smoothstep(70.0, 145.0, dist) * 0.35;
+    FragColor = vec4(color, 1.0);
+}
+)GLSL";
+
 const char* skyVertexShader = R"GLSL(
 #version 330 core
 out vec2 vUV;
@@ -1367,12 +1394,13 @@ out vec4 FragColor;
 void main() {
     vec3 color = texture(uTexture, vUV).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
-    float frame = 1.0 - smoothstep(0.012, 0.020, min(edge.x, edge.y));
-    float scan = sin(vUV.y * 760.0) * 0.006;
-    color = pow(max(color, vec3(0.0)), vec3(0.82)) * 1.32 + scan;
-    color = mix(vec3(0.5), color, 1.18);
-    color = mix(color, vec3(0.015, 0.018, 0.016), frame * 0.62);
-    FragColor = vec4(color, 1.0);
+    float frame = 1.0 - smoothstep(0.010, 0.018, min(edge.x, edge.y));
+    float grey = dot(color, vec3(0.299, 0.587, 0.114));
+    vec3 cctv = vec3(grey * 0.82, grey * 0.98, grey * 0.88);
+    float scan = sin(vUV.y * 420.0) * 0.018;
+    cctv = cctv * 1.18 + scan;
+    cctv = mix(cctv, vec3(0.010, 0.016, 0.012), frame * 0.72);
+    FragColor = vec4(cctv, 1.0);
 }
 )GLSL";
 
@@ -1404,6 +1432,7 @@ int main() {
     glfwSetCursorPosCallback(window, cursorCallback);
 
     GLuint voxelProgram = makeProgram(voxelVertexShader, voxelFragmentShader);
+    GLuint satelliteProgram = makeProgram(voxelVertexShader, satelliteFragmentShader);
     GLuint skyProgram = makeProgram(skyVertexShader, skyFragmentShader);
     GLuint lineProgram = makeProgram(lineVertexShader, lineFragmentShader);
     GLuint uiProgram = makeProgram(uiVertexShader, uiFragmentShader);
@@ -1522,14 +1551,14 @@ int main() {
         glViewport(0, 0, satelliteCamera.size, satelliteCamera.size);
         glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        const Mat4 satelliteProj = perspective(42.0f * Pi / 180.0f, 1.0f, 0.2f, 150.0f);
+        const Mat4 satelliteProj = perspective(46.0f * Pi / 180.0f, 1.0f, 0.2f, 150.0f);
         const Vec3 satelliteLookTarget = satelliteOrbit == SatelliteOrbit::Polar
             ? worldCenter
             : Vec3{satellitePosition.x, worldCenter.y, satellitePosition.z};
         const Vec3 satelliteDown = normalize(satelliteLookTarget - satellitePosition);
         const Mat4 satelliteView = lookAt(satellitePosition, satelliteLookTarget, {0.0f, 0.0f, -1.0f});
         const Mat4 satelliteVp = multiply(satelliteProj, satelliteView);
-        drawVoxelScene(voxelProgram, satelliteVp, opaque, transparentMesh, nullptr, satellitePosition, satelliteDown, static_cast<float>(now), 1.0f);
+        drawVoxelScene(satelliteProgram, satelliteVp, opaque, transparentMesh, nullptr, satellitePosition, satelliteDown, static_cast<float>(now), 0.0f, false);
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, width, height);
