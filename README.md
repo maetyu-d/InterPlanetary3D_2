@@ -12,6 +12,10 @@ cmake --build build
 
 ## Controls
 
+The game runs in local two-player split-screen. Player 1 starts on the top face; player 2 starts on the opposite face. Each half of the screen has its own satellite feed.
+
+### Player 1
+
 - `WASD` to move
 - Mouse to look
 - Look direction controls the headlamp
@@ -27,3 +31,10 @@ cmake --build build
 - `R` to regenerate the world
 - `F1` to release/capture the mouse
 - `Esc` to quit
+
+### Player 2
+
+- `IJKL` to move
+- Arrow keys to look
+- `Enter` to jump
+- Hold `Right Shift` to sprint

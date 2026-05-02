@@ -278,11 +278,13 @@ struct World {
 struct Player {
     Vec3 position{WorldSize / 2.0f, WorldHeight + 4.0f, WorldSize / 2.0f};
     Vec3 velocity{};
+    float upSign = 1.0f;
     float yaw = 0.0f;
     float pitch = -0.12f;
     float lookVelocityX = 0.0f;
     float lookVelocityY = 0.0f;
     bool grounded = false;
+    bool jumpWasDown = false;
     float coyoteTimer = 0.0f;
     float jumpBufferTimer = 0.0f;
 };
@@ -577,12 +579,29 @@ Vec3 spawnPosition(const World& world) {
     return {WorldSize / 2.0f, WorldHeight + 4.0f, WorldSize / 2.0f};
 }
 
-void respawnPlayer(const World& world, Player& player) {
-    player.position = spawnPosition(world);
+Vec3 spawnPositionOppositeFace(const World& world) {
+    const int x = WorldSize / 2;
+    const int z = WorldSize / 2;
+    for (int y = 0; y < WorldHeight; ++y) {
+        if (solid(world.get(x, y, z))) {
+            return {x + 0.5f, y - PlayerHeight - 0.2f, z + 0.5f};
+        }
+    }
+    return {WorldSize / 2.0f, -PlayerHeight - 4.0f, WorldSize / 2.0f};
+}
+
+void respawnPlayer(const World& world, Player& player, bool oppositeFace = false) {
+    player.upSign = oppositeFace ? -1.0f : 1.0f;
+    player.position = oppositeFace ? spawnPositionOppositeFace(world) : spawnPosition(world);
     player.velocity = {};
     player.grounded = false;
+    player.jumpWasDown = false;
     player.coyoteTimer = 0.0f;
     player.jumpBufferTimer = 0.0f;
+    if (oppositeFace) {
+        player.yaw = Pi;
+        player.pitch = 0.10f;
+    }
 }
 
 GLuint compileShader(GLenum type, const char* source) {
@@ -828,6 +847,25 @@ bool playerCollides(const World& world, Vec3 position) {
     return false;
 }
 
+bool playerCollides(const World& world, const Player& player, Vec3 position) {
+    const int minX = static_cast<int>(std::floor(position.x - PlayerRadius));
+    const int maxX = static_cast<int>(std::floor(position.x + PlayerRadius));
+    const float headY = position.y + player.upSign * PlayerHeight;
+    const int minY = static_cast<int>(std::floor(std::min(position.y, headY)));
+    const int maxY = static_cast<int>(std::floor(std::max(position.y, headY)));
+    const int minZ = static_cast<int>(std::floor(position.z - PlayerRadius));
+    const int maxZ = static_cast<int>(std::floor(position.z + PlayerRadius));
+
+    for (int y = minY; y <= maxY; ++y) {
+        for (int z = minZ; z <= maxZ; ++z) {
+            for (int x = minX; x <= maxX; ++x) {
+                if (solid(world.get(x, y, z))) return true;
+            }
+        }
+    }
+    return false;
+}
+
 float approach(float value, float target, float maxDelta) {
     if (value < target) return std::min(value + maxDelta, target);
     return std::max(value - maxDelta, target);
@@ -835,7 +873,7 @@ float approach(float value, float target, float maxDelta) {
 
 bool moveAxis(const World& world, Player& player, float& coord, float delta) {
     coord += delta;
-    if (playerCollides(world, player.position)) {
+    if (playerCollides(world, player, player.position)) {
         coord -= delta;
         if (&coord == &player.position.y) player.velocity.y = 0.0f;
         return true;
@@ -872,14 +910,13 @@ void updatePlayer(const World& world, Player& player, float dt, bool allowLook =
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) input = input - right;
     if (length(input) > 0.0f) input = normalize(input);
 
-    static bool wasJumpDown = false;
     const bool jumpDown = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
-    if (jumpDown && !wasJumpDown) {
+    if (jumpDown && !player.jumpWasDown) {
         player.jumpBufferTimer = JumpBufferTime;
     } else {
         player.jumpBufferTimer = std::max(0.0f, player.jumpBufferTimer - dt);
     }
-    wasJumpDown = jumpDown;
+    player.jumpWasDown = jumpDown;
 
     const bool sprinting = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
     const float targetSpeed = sprinting ? SprintSpeed : WalkSpeed;
@@ -895,24 +932,82 @@ void updatePlayer(const World& world, Player& player, float dt, bool allowLook =
 
     player.coyoteTimer = player.grounded ? CoyoteTime : std::max(0.0f, player.coyoteTimer - dt);
     if (player.jumpBufferTimer > 0.0f && player.coyoteTimer > 0.0f) {
-        player.velocity.y = JumpSpeed;
+        player.velocity.y = JumpSpeed * player.upSign;
         player.grounded = false;
         player.coyoteTimer = 0.0f;
         player.jumpBufferTimer = 0.0f;
     }
 
-    player.velocity.y -= Gravity * dt;
-    player.velocity.y = std::max(player.velocity.y, -32.0f);
+    player.velocity.y -= Gravity * player.upSign * dt;
+    if (player.upSign > 0.0f) player.velocity.y = std::max(player.velocity.y, -32.0f);
+    else player.velocity.y = std::min(player.velocity.y, 32.0f);
 
     moveAxis(world, player, player.position.x, player.velocity.x * dt);
     moveAxis(world, player, player.position.z, player.velocity.z * dt);
     const float beforeY = player.position.y;
     const float verticalVelocity = player.velocity.y;
     const bool hitVertical = moveAxis(world, player, player.position.y, player.velocity.y * dt);
-    player.grounded = hitVertical && verticalVelocity <= 0.0f && beforeY > player.position.y - 0.0001f;
+    player.grounded = hitVertical && verticalVelocity * player.upSign <= 0.0f && beforeY * player.upSign > player.position.y * player.upSign - 0.0001f;
 
-    if (player.position.y < -4.0f) {
-        respawnPlayer(world, player);
+    if ((player.upSign > 0.0f && player.position.y < -4.0f) || (player.upSign < 0.0f && player.position.y > WorldHeight + 4.0f)) {
+        respawnPlayer(world, player, player.upSign < 0.0f);
+    }
+}
+
+void updatePlayerTwo(const World& world, Player& player, float dt) {
+    const float lookSpeed = 1.9f * dt;
+    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) player.yaw += lookSpeed;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) player.yaw -= lookSpeed;
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) player.pitch += lookSpeed;
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) player.pitch -= lookSpeed;
+    player.pitch = std::clamp(player.pitch, -1.35f, 1.35f);
+
+    Vec3 forward = normalize(forwardFromAngles(player.yaw, 0.0f));
+    Vec3 right = normalize(cross(forward, {0.0f, player.upSign, 0.0f}));
+    Vec3 input{};
+    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) input = input + forward;
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) input = input - forward;
+    if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) input = input + right;
+    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) input = input - right;
+    if (length(input) > 0.0f) input = normalize(input);
+
+    const bool jumpDown = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_KP_ENTER) == GLFW_PRESS;
+    if (jumpDown && !player.jumpWasDown) player.jumpBufferTimer = JumpBufferTime;
+    else player.jumpBufferTimer = std::max(0.0f, player.jumpBufferTimer - dt);
+    player.jumpWasDown = jumpDown;
+
+    const bool sprinting = glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    const float targetSpeed = sprinting ? SprintSpeed : WalkSpeed;
+    const Vec3 desiredVelocity{input.x * targetSpeed, 0.0f, input.z * targetSpeed};
+    const float accel = player.grounded ? GroundAcceleration : AirAcceleration;
+    player.velocity.x = approach(player.velocity.x, desiredVelocity.x, accel * dt);
+    player.velocity.z = approach(player.velocity.z, desiredVelocity.z, accel * dt);
+    if (length(input) < 0.001f && player.grounded) {
+        player.velocity.x = approach(player.velocity.x, 0.0f, GroundFriction * dt);
+        player.velocity.z = approach(player.velocity.z, 0.0f, GroundFriction * dt);
+    }
+
+    player.coyoteTimer = player.grounded ? CoyoteTime : std::max(0.0f, player.coyoteTimer - dt);
+    if (player.jumpBufferTimer > 0.0f && player.coyoteTimer > 0.0f) {
+        player.velocity.y = JumpSpeed * player.upSign;
+        player.grounded = false;
+        player.coyoteTimer = 0.0f;
+        player.jumpBufferTimer = 0.0f;
+    }
+
+    player.velocity.y -= Gravity * player.upSign * dt;
+    if (player.upSign > 0.0f) player.velocity.y = std::max(player.velocity.y, -32.0f);
+    else player.velocity.y = std::min(player.velocity.y, 32.0f);
+
+    moveAxis(world, player, player.position.x, player.velocity.x * dt);
+    moveAxis(world, player, player.position.z, player.velocity.z * dt);
+    const float beforeY = player.position.y;
+    const float verticalVelocity = player.velocity.y;
+    const bool hitVertical = moveAxis(world, player, player.position.y, player.velocity.y * dt);
+    player.grounded = hitVertical && verticalVelocity * player.upSign <= 0.0f && beforeY * player.upSign > player.position.y * player.upSign - 0.0001f;
+
+    if ((player.upSign > 0.0f && player.position.y < -4.0f) || (player.upSign < 0.0f && player.position.y > WorldHeight + 4.0f)) {
+        respawnPlayer(world, player, player.upSign < 0.0f);
     }
 }
 
@@ -1167,7 +1262,7 @@ void addUiRectRotated(std::vector<UiVertex>& vertices, Vec2 origin, float angle,
     addUiQuad(vertices, points, color);
 }
 
-void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool rocketLauncher, float progress, float time) {
+void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool rocketLauncher, float progress, float time, bool alternatePalette = false) {
     const float action = (mining || building || rocketLauncher) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
     const float idle = std::sin(time * 1.7f) * 0.006f;
     const float sx = -0.015f - action * 0.030f;
@@ -1183,25 +1278,35 @@ void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool bu
         const Vec2 aim{muzzle.x - tail.x, muzzle.y - tail.y};
         const float launcherAngle = std::atan2(aim.y, aim.x);
         const float launcherLength = std::sqrt(aim.x * aim.x + aim.y * aim.y);
-        addUiRectRotated(vertices, tail, launcherAngle, 0.000f, -0.034f, launcherLength, 0.068f, {0.055f, 0.064f, 0.060f, 1.0f});
+        const std::array<float, 4> launcherBody = alternatePalette ? std::array<float, 4>{0.050f, 0.075f, 0.105f, 1.0f} : std::array<float, 4>{0.055f, 0.064f, 0.060f, 1.0f};
+        const std::array<float, 4> launcherBand = alternatePalette ? std::array<float, 4>{0.72f, 0.86f, 0.08f, 1.0f} : std::array<float, 4>{0.42f, 0.12f, 0.055f, 1.0f};
+        const std::array<float, 4> launcherTip = alternatePalette ? std::array<float, 4>{0.12f, 0.64f, 1.0f, 1.0f} : std::array<float, 4>{0.70f, 0.18f, 0.06f, 1.0f};
+        addUiRectRotated(vertices, tail, launcherAngle, 0.000f, -0.034f, launcherLength, 0.068f, launcherBody);
         addUiRectRotated(vertices, tail, launcherAngle, -0.020f, -0.052f, 0.075f, 0.104f, {0.18f, 0.20f, 0.18f, 1.0f});
-        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.046f, -0.060f, 0.052f, 0.120f, {0.42f, 0.12f, 0.055f, 1.0f});
-        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.035f, -0.082f, 0.034f, 0.044f, {0.70f, 0.18f, 0.06f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.046f, -0.060f, 0.052f, 0.120f, launcherBand);
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.035f, -0.082f, 0.034f, 0.044f, launcherTip);
         addUiRectRotated(vertices, tail, launcherAngle, 0.080f, 0.020f, 0.052f, 0.086f, {0.11f, 0.115f, 0.105f, 1.0f});
         addUiRectRotated(vertices, tail, launcherAngle, 0.108f, 0.088f, 0.035f, 0.058f, {0.035f, 0.032f, 0.030f, 1.0f});
     } else {
         addUiRectRotated(vertices, pivot, swing, -0.018f, -0.015f, 0.036f, 0.250f, {0.32f, 0.21f, 0.11f, 1.0f});
         addUiRectRotated(vertices, pivot, swing, -0.026f, 0.070f, 0.052f, 0.030f, {0.20f, 0.13f, 0.07f, 1.0f});
-        const std::array<float, 4> toolColor = building ? std::array<float, 4>{0.38f, 0.40f, 0.38f, 1.0f} : std::array<float, 4>{0.05f, 0.60f, 0.58f, 1.0f};
-        const std::array<float, 4> toolShadow = building ? std::array<float, 4>{0.18f, 0.19f, 0.19f, 1.0f} : std::array<float, 4>{0.02f, 0.28f, 0.29f, 1.0f};
+        const std::array<float, 4> toolColor = alternatePalette
+            ? (building ? std::array<float, 4>{0.72f, 0.76f, 0.16f, 1.0f} : std::array<float, 4>{0.10f, 0.40f, 1.0f, 1.0f})
+            : (building ? std::array<float, 4>{0.38f, 0.40f, 0.38f, 1.0f} : std::array<float, 4>{0.05f, 0.60f, 0.58f, 1.0f});
+        const std::array<float, 4> toolShadow = alternatePalette
+            ? (building ? std::array<float, 4>{0.30f, 0.32f, 0.08f, 1.0f} : std::array<float, 4>{0.03f, 0.14f, 0.38f, 1.0f})
+            : (building ? std::array<float, 4>{0.18f, 0.19f, 0.19f, 1.0f} : std::array<float, 4>{0.02f, 0.28f, 0.29f, 1.0f});
         addUiRectRotated(vertices, pivot, swing, -0.105f, -0.060f, 0.180f, 0.050f, toolShadow);
         addUiRectRotated(vertices, pivot, swing, -0.085f, -0.080f, 0.115f, 0.060f, toolColor);
     }
 
     addUiRect(vertices, 0.75f + sx, 0.76f + sy, 0.24f, 0.14f, {0.055f, 0.048f, 0.044f, 0.94f});
-    addUiRect(vertices, 0.72f + sx, 0.70f + sy, 0.21f, 0.14f, {0.34f, 0.27f, 0.22f, 1.0f});
-    addUiRect(vertices, 0.79f + sx, 0.66f + sy, 0.12f, 0.10f, {0.62f, 0.50f, 0.40f, 1.0f});
-    addUiRect(vertices, 0.89f + sx, 0.66f + sy, 0.052f, 0.074f, {0.70f, 0.56f, 0.44f, 1.0f});
+    const std::array<float, 4> sleeve = alternatePalette ? std::array<float, 4>{0.18f, 0.23f, 0.34f, 1.0f} : std::array<float, 4>{0.34f, 0.27f, 0.22f, 1.0f};
+    const std::array<float, 4> skin = alternatePalette ? std::array<float, 4>{0.50f, 0.58f, 0.66f, 1.0f} : std::array<float, 4>{0.62f, 0.50f, 0.40f, 1.0f};
+    const std::array<float, 4> knuckle = alternatePalette ? std::array<float, 4>{0.58f, 0.68f, 0.76f, 1.0f} : std::array<float, 4>{0.70f, 0.56f, 0.44f, 1.0f};
+    addUiRect(vertices, 0.72f + sx, 0.70f + sy, 0.21f, 0.14f, sleeve);
+    addUiRect(vertices, 0.79f + sx, 0.66f + sy, 0.12f, 0.10f, skin);
+    addUiRect(vertices, 0.89f + sx, 0.66f + sy, 0.052f, 0.074f, knuckle);
 
     glUseProgram(uiProgram);
     glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
@@ -1489,6 +1594,46 @@ void drawPlanetCubeWireframe(const LineUniforms& lineUniforms, GLuint lineVao, G
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
     glLineWidth(2.0f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
+void drawSatellitePlayerTracker(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 playerPosition, float upSign, std::array<float, 4> color) {
+    const Vec3 center = playerPosition + Vec3{0.0f, upSign * PlayerHeight * 0.5f, 0.0f};
+    const float radius = 1.55f;
+    const float height = PlayerHeight + 0.9f;
+    std::vector<float> data;
+    data.reserve(3 * 180);
+    auto addLine = [&data](Vec3 a, Vec3 b) {
+        data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
+        data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
+    };
+
+    constexpr int Segments = 24;
+    for (int i = 0; i < Segments; ++i) {
+        const float a0 = static_cast<float>(i) / static_cast<float>(Segments) * Pi * 2.0f;
+        const float a1 = static_cast<float>(i + 1) / static_cast<float>(Segments) * Pi * 2.0f;
+        addLine(center + Vec3{std::cos(a0) * radius, 0.0f, std::sin(a0) * radius},
+                center + Vec3{std::cos(a1) * radius, 0.0f, std::sin(a1) * radius});
+    }
+
+    addLine(center + Vec3{-radius * 1.45f, 0.0f, 0.0f}, center + Vec3{radius * 1.45f, 0.0f, 0.0f});
+    addLine(center + Vec3{0.0f, 0.0f, -radius * 1.45f}, center + Vec3{0.0f, 0.0f, radius * 1.45f});
+    addLine(center + Vec3{0.0f, -upSign * height * 0.5f, 0.0f}, center + Vec3{0.0f, upSign * height * 0.5f, 0.0f});
+
+    const Vec3 top = center + Vec3{0.0f, upSign * height * 0.5f, 0.0f};
+    addLine(top, top + Vec3{radius * 0.65f, upSign * 0.75f, 0.0f});
+    addLine(top, top + Vec3{-radius * 0.65f, upSign * 0.75f, 0.0f});
+    addLine(top, top + Vec3{0.0f, upSign * 0.75f, radius * 0.65f});
+    addLine(top, top + Vec3{0.0f, upSign * 0.75f, -radius * 0.65f});
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    glUniform4f(lineUniforms.color, color[0], color[1], color[2], color[3]);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(3.0f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -1944,7 +2089,9 @@ int main() {
     world.seed = randomPlanetSeed();
     generateWorld(world);
     Player player;
+    Player playerTwo;
     respawnPlayer(world, player);
+    respawnPlayer(world, playerTwo, true);
     glfwSetWindowUserPointer(window, &player);
     glfwSetCursorPosCallback(window, cursorCallback);
 
@@ -1968,7 +2115,9 @@ int main() {
     GLuint uiVbo = 0;
     GLuint uiVao = makeUiVao(uiVbo);
     SatelliteCamera satelliteCamera;
+    SatelliteCamera satelliteCameraTwo;
     ensureSatelliteCamera(satelliteCamera);
+    ensureSatelliteCamera(satelliteCameraTwo);
 
     Mesh opaque;
     Mesh transparentMesh;
@@ -1989,6 +2138,7 @@ int main() {
     float satelliteOrbitHeight = 56.0f;
     float targetSatelliteOrbitHeight = satelliteOrbitHeight;
     double lastSatelliteFeedTime = -1.0;
+    double lastSatelliteFeedTimeTwo = -1.0;
     bool satelliteFeedDirty = true;
     bool rocketLauncherArmed = false;
     Rocket rocket;
@@ -2029,6 +2179,7 @@ int main() {
             generateWorld(world);
             rebuildMeshes(world, opaque, transparentMesh);
             respawnPlayer(world, player);
+            respawnPlayer(world, playerTwo, true);
             satelliteFeedDirty = true;
         }
 
@@ -2037,9 +2188,11 @@ int main() {
 
         const bool missileGuided = rocket.active && rocket.age >= 1.0f;
         updatePlayer(world, player, dt, !missileGuided);
-        const Vec3 eye{player.position.x, player.position.y + PlayerHeight * 0.88f, player.position.z};
+        updatePlayerTwo(world, playerTwo, dt);
+        const Vec3 eye{player.position.x, player.position.y + player.upSign * PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
         const Vec3 satellitePosition = satellitePositionAt(world, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
+        const Vec3 satellitePositionTwo = satellitePositionAt(world, static_cast<float>(now) + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
 
         Vec3 hit{};
         Vec3 previous{};
@@ -2141,6 +2294,7 @@ int main() {
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 drawPlanetCubeWireframe(lineUniform, lineVao, lineVbo, satelliteView.vp);
+                drawSatellitePlayerTracker(lineUniform, lineVao, lineVbo, satelliteView.vp, playerTwo.position, playerTwo.upSign, {0.15f, 0.55f, 1.0f, 0.95f});
                 glDisable(GL_BLEND);
                 glEnable(GL_DEPTH_TEST);
             }
@@ -2148,9 +2302,30 @@ int main() {
             lastSatelliteFeedTime = now;
             satelliteFeedDirty = false;
         }
+        if (satelliteFeedDirty || now - lastSatelliteFeedTimeTwo >= 0.12) {
+            resizeSatelliteCamera(satelliteCameraTwo, satelliteCameraTwo.satelliteSize);
+            glBindFramebuffer(GL_FRAMEBUFFER, satelliteCameraTwo.framebuffer);
+            glViewport(0, 0, satelliteCameraTwo.size, satelliteCameraTwo.size);
+            glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo);
+            drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, static_cast<float>(now), 0.0f, false);
+            glDisable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            drawPlanetCubeWireframe(lineUniform, lineVao, lineVbo, satelliteViewTwo.vp);
+            drawSatellitePlayerTracker(lineUniform, lineVao, lineVbo, satelliteViewTwo.vp, player.position, player.upSign, {1.0f, 0.30f, 0.08f, 0.95f});
+            glDisable(GL_BLEND);
+            glEnable(GL_DEPTH_TEST);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            lastSatelliteFeedTimeTwo = now;
+        }
+        const int leftWidth = std::max(1, width / 2);
+        const int rightWidth = std::max(1, width - leftWidth);
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        glViewport(0, 0, leftWidth, height);
         glDisable(GL_DEPTH_TEST);
         glUseProgram(skyProgram);
         glUniform1f(skyTimeUniform, static_cast<float>(now));
@@ -2158,8 +2333,8 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glEnable(GL_DEPTH_TEST);
 
-        const Mat4 proj = perspective(68.0f * Pi / 180.0f, static_cast<float>(width) / static_cast<float>(height), 0.05f, 140.0f);
-        const Mat4 view = lookAt(eye, eye + look, {0.0f, 1.0f, 0.0f});
+        const Mat4 proj = perspective(68.0f * Pi / 180.0f, static_cast<float>(leftWidth) / static_cast<float>(height), 0.05f, 140.0f);
+        const Mat4 view = lookAt(eye, eye + look, {0.0f, player.upSign, 0.0f});
         const Mat4 vp = multiply(proj, view);
 
         drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, rocket.active ? &rocketMesh : nullptr, rocket.position, rocket.direction, rocket.up, eye, look, static_cast<float>(now));
@@ -2189,11 +2364,42 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindVertexArray(emptyVao);
-        if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, width, height);
-        else drawSatelliteFeed(textureUniform, satelliteCamera.color, width, height, static_cast<float>(now));
-        if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, width, height, static_cast<float>(now));
+        if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, leftWidth, height);
+        else drawSatelliteFeed(textureUniform, satelliteCamera.color, leftWidth, height, static_cast<float>(now));
+        if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, leftWidth, height, static_cast<float>(now));
         if (rocketLauncherArmed || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, static_cast<float>(now));
         drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, rocketLauncherArmed, interactionProgress, static_cast<float>(now));
+        glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
+        glEnable(GL_DEPTH_TEST);
+
+        glViewport(leftWidth, 0, rightWidth, height);
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(skyProgram);
+        glUniform1f(skyTimeUniform, static_cast<float>(now));
+        glBindVertexArray(emptyVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glEnable(GL_DEPTH_TEST);
+
+        const Vec3 eyeTwo{playerTwo.position.x, playerTwo.position.y + playerTwo.upSign * PlayerHeight * 0.88f, playerTwo.position.z};
+        const Vec3 lookTwo = forwardFromAngles(playerTwo.yaw, playerTwo.pitch);
+        const Mat4 projTwo = perspective(68.0f * Pi / 180.0f, static_cast<float>(rightWidth) / static_cast<float>(height), 0.05f, 140.0f);
+        const Mat4 viewTwo = lookAt(eyeTwo, eyeTwo + lookTwo, {0.0f, playerTwo.upSign, 0.0f});
+        const Mat4 vpTwo = multiply(projTwo, viewTwo);
+        drawVoxelScene(voxelUniform, vpTwo, opaque, transparentMesh, &satelliteMesh, satellitePositionTwo, rocket.active ? &rocketMesh : nullptr, rocket.position, rocket.direction, rocket.up, eyeTwo, lookTwo, static_cast<float>(now));
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, static_cast<float>(now) + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
+        drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blast);
+        glDisable(GL_BLEND);
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glBindVertexArray(emptyVao);
+        drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, rightWidth, height, static_cast<float>(now));
+        drawHand(uiProgram, uiVao, uiVbo, false, false, false, 0.0f, static_cast<float>(now), true);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
