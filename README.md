@@ -20,7 +20,10 @@ cmake --build build
 - Hold left click to mine a block
 - Hold right click to build against the highlighted face
 - `1-2` to select normal or hard building blocks
+- `M` to pick up/arm the rocket launcher
+- Left click while armed to fire a rocket; after one second, the top-right feed switches to the missile nose camera
 - `O` to cycle the satellite between current-face, opposite-face, and polar orbits
+- `-` and `=` to lower/raise the satellite orbit
 - `R` to regenerate the world
 - `F1` to release/capture the mouse
 - `Esc` to quit

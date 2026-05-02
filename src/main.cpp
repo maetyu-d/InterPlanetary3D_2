@@ -80,6 +80,35 @@ Mat4 identity() {
     return r;
 }
 
+Mat4 translation(Vec3 v) {
+    Mat4 r = identity();
+    r.m[12] = v.x;
+    r.m[13] = v.y;
+    r.m[14] = v.z;
+    return r;
+}
+
+Mat4 transformFromBasis(Vec3 position, Vec3 forward, Vec3 up) {
+    forward = normalize(forward);
+    Vec3 right = normalize(cross(up, forward));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    up = normalize(cross(forward, right));
+    Mat4 r = identity();
+    r.m[0] = right.x;
+    r.m[1] = right.y;
+    r.m[2] = right.z;
+    r.m[4] = up.x;
+    r.m[5] = up.y;
+    r.m[6] = up.z;
+    r.m[8] = forward.x;
+    r.m[9] = forward.y;
+    r.m[10] = forward.z;
+    r.m[12] = position.x;
+    r.m[13] = position.y;
+    r.m[14] = position.z;
+    return r;
+}
+
 Mat4 multiply(const Mat4& a, const Mat4& b) {
     Mat4 r{};
     for (int col = 0; col < 4; ++col) {
@@ -178,7 +207,48 @@ struct SatelliteCamera {
     GLuint framebuffer = 0;
     GLuint color = 0;
     GLuint depth = 0;
-    int size = 360;
+    int size = 0;
+    int satelliteSize = 45;
+    int missileSize = 240;
+};
+
+struct VoxelUniforms {
+    GLuint program = 0;
+    GLint mvp = -1;
+    GLint model = -1;
+    GLint camera = -1;
+    GLint headlampDir = -1;
+    GLint sunDir = -1;
+    GLint fogColor = -1;
+    GLint time = -1;
+    GLint feedClarity = -1;
+};
+
+struct LineUniforms {
+    GLuint program = 0;
+    GLint mvp = -1;
+    GLint color = -1;
+};
+
+struct TextureUniforms {
+    GLuint program = 0;
+    GLint rect = -1;
+    GLint texture = -1;
+    GLint time = -1;
+};
+
+struct MissileFeedUniforms {
+    GLuint program = 0;
+    GLint rect = -1;
+    GLint texture = -1;
+};
+
+struct SatelliteView {
+    Vec3 position{};
+    Vec3 target{};
+    Vec3 down{};
+    Vec3 up{};
+    Mat4 vp{};
 };
 
 struct World {
@@ -215,6 +285,22 @@ struct Player {
     bool grounded = false;
     float coyoteTimer = 0.0f;
     float jumpBufferTimer = 0.0f;
+};
+
+struct Rocket {
+    bool active = false;
+    float age = 0.0f;
+    Vec3 position{};
+    Vec3 direction{0.0f, 0.0f, 1.0f};
+    Vec3 up{0.0f, 1.0f, 0.0f};
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+};
+
+struct Blast {
+    bool active = false;
+    float age = 0.0f;
+    Vec3 position{};
 };
 
 GLFWwindow* window = nullptr;
@@ -341,19 +427,21 @@ float buildDuration(BuildType type) {
 }
 
 float mineDuration(Block block) {
+    constexpr float MiningDifficulty = 2.0f;
+    float duration = 0.5f;
     switch (block) {
-        case Block::Ash: return 0.42f;
-        case Block::BloodSoil: return 0.50f;
-        case Block::Basalt: return 1.15f;
-        case Block::PaleStone: return 0.85f;
-        case Block::DeadCrystal: return 0.70f;
-        case Block::Bone: return 0.62f;
-        case Block::ObsidianGlass: return 1.35f;
-        case Block::Fuel: return 1.05f;
-        case Block::Plutonium: return 1.45f;
+        case Block::Ash: duration = 0.42f; break;
+        case Block::BloodSoil: duration = 0.50f; break;
+        case Block::Basalt: duration = 1.15f; break;
+        case Block::PaleStone: duration = 0.85f; break;
+        case Block::DeadCrystal: duration = 0.70f; break;
+        case Block::Bone: duration = 0.62f; break;
+        case Block::ObsidianGlass: duration = 1.35f; break;
+        case Block::Fuel: duration = 1.05f; break;
+        case Block::Plutonium: duration = 1.45f; break;
         case Block::Air: break;
     }
-    return 0.5f;
+    return duration * MiningDifficulty;
 }
 
 bool sameBlockCell(Vec3 a, Vec3 b) {
@@ -362,14 +450,20 @@ bool sameBlockCell(Vec3 a, Vec3 b) {
         && static_cast<int>(a.z) == static_cast<int>(b.z);
 }
 
+int faceProfile(int face) {
+    (void)face;
+    return 0;
+}
+
 int faceTerrainHeight(int u, int v, int face, int seed) {
+    const int profile = faceProfile(face);
     const float nx = static_cast<float>(u) / 22.0f;
     const float nz = static_cast<float>(v) / 22.0f;
-    const float continent = fractalNoise(nx, nz, seed + face * 503);
-    const float ridges = std::abs(fractalNoise(nx * 2.45f + 32.0f, nz * 2.45f - 8.0f, seed + face * 503 + 7) - 0.5f) * 2.0f;
-    const float pits = fractalNoise(nx * 3.0f - 11.0f, nz * 3.0f + 19.0f, seed + face * 503 + 31);
-    const float crags = std::abs(fractalNoise(nx * 5.0f - 17.0f, nz * 5.0f + 29.0f, seed + face * 503 + 83) - 0.5f) * 2.0f;
-    const float scars = fractalNoise(nx * 9.0f + 3.0f, nz * 9.0f - 6.0f, seed + face * 503 + 151);
+    const float continent = fractalNoise(nx, nz, seed + profile * 503);
+    const float ridges = std::abs(fractalNoise(nx * 2.45f + 32.0f, nz * 2.45f - 8.0f, seed + profile * 503 + 7) - 0.5f) * 2.0f;
+    const float pits = fractalNoise(nx * 3.0f - 11.0f, nz * 3.0f + 19.0f, seed + profile * 503 + 31);
+    const float crags = std::abs(fractalNoise(nx * 5.0f - 17.0f, nz * 5.0f + 29.0f, seed + profile * 503 + 83) - 0.5f) * 2.0f;
+    const float scars = fractalNoise(nx * 9.0f + 3.0f, nz * 9.0f - 6.0f, seed + profile * 503 + 151);
     int height = 2 + static_cast<int>(continent * 18.0f + ridges * 18.0f + crags * 10.0f - pits * 9.0f);
     if (scars > 0.68f) height += 5;
     if (scars < 0.24f) height -= 4;
@@ -378,18 +472,19 @@ int faceTerrainHeight(int u, int v, int face, int seed) {
 }
 
 Block cubeFaceMaterial(int depth, int height, int u, int v, int face, int seed) {
-    const float vein = fractalNoise((u + depth * 3) / 7.0f, (v - depth * 2) / 7.0f, seed + face * 503 + 99);
-    const float resourceA = fractalNoise((u + face * 19) / 5.5f, (v + depth * 2) / 5.5f, seed + face * 701 + 211);
-    const float resourceB = fractalNoise((u - depth * 3) / 6.5f, (v + face * 23) / 6.5f, seed + face * 701 + 409);
+    const int profile = faceProfile(face);
+    const float vein = fractalNoise((u + depth * 3) / 7.0f, (v - depth * 2) / 7.0f, seed + profile * 503 + 99);
+    const float resourceA = fractalNoise((u + profile * 19) / 5.5f, (v + depth * 2) / 5.5f, seed + profile * 701 + 211);
+    const float resourceB = fractalNoise((u - depth * 3) / 6.5f, (v + profile * 23) / 6.5f, seed + profile * 701 + 409);
     if (depth >= 5 && depth <= 11) {
-        const float fleck = hash2(u + depth * 13, v - depth * 7, seed + face * 997);
+        const float fleck = hash2(u + depth * 13, v - depth * 7, seed + profile * 997);
         if (resourceB > 0.835f && fleck > 0.74f) return Block::Plutonium;
         if (resourceA > 0.815f && fleck > 0.64f) return Block::Fuel;
     }
     if (depth == 0) {
-        if (height < 10) return hash2(u, v, seed + face * 17 + 91) > 0.68f ? Block::ObsidianGlass : Block::Ash;
+        if (height < 10) return hash2(u, v, seed + profile * 17 + 91) > 0.68f ? Block::ObsidianGlass : Block::Ash;
         if (height > FaceRelief - 9) return Block::Bone;
-        return hash2(u, v, seed + face * 17 + 144) > 0.66f ? Block::Ash : Block::BloodSoil;
+        return hash2(u, v, seed + profile * 17 + 144) > 0.66f ? Block::Ash : Block::BloodSoil;
     }
     if (depth < 4) return height < 10 ? Block::Ash : Block::BloodSoil;
     return vein > 0.80f ? Block::PaleStone : Block::Basalt;
@@ -525,6 +620,45 @@ GLuint makeProgram(const char* vertex, const char* fragment) {
     return program;
 }
 
+VoxelUniforms voxelUniforms(GLuint program) {
+    return {
+        program,
+        glGetUniformLocation(program, "uMVP"),
+        glGetUniformLocation(program, "uModel"),
+        glGetUniformLocation(program, "uCamera"),
+        glGetUniformLocation(program, "uHeadlampDir"),
+        glGetUniformLocation(program, "uSunDir"),
+        glGetUniformLocation(program, "uFogColor"),
+        glGetUniformLocation(program, "uTime"),
+        glGetUniformLocation(program, "uFeedClarity")
+    };
+}
+
+LineUniforms lineUniforms(GLuint program) {
+    return {
+        program,
+        glGetUniformLocation(program, "uMVP"),
+        glGetUniformLocation(program, "uColor")
+    };
+}
+
+TextureUniforms textureUniforms(GLuint program) {
+    return {
+        program,
+        glGetUniformLocation(program, "uRect"),
+        glGetUniformLocation(program, "uTexture"),
+        glGetUniformLocation(program, "uTime")
+    };
+}
+
+MissileFeedUniforms missileFeedUniforms(GLuint program) {
+    return {
+        program,
+        glGetUniformLocation(program, "uRect"),
+        glGetUniformLocation(program, "uTexture")
+    };
+}
+
 void uploadMesh(Mesh& mesh, const std::vector<Vertex>& vertices) {
     if (mesh.vao == 0) {
         glGenVertexArrays(1, &mesh.vao);
@@ -547,6 +681,7 @@ void uploadMesh(Mesh& mesh, const std::vector<Vertex>& vertices) {
 
 void ensureSatelliteCamera(SatelliteCamera& camera) {
     if (camera.framebuffer != 0) return;
+    camera.size = camera.satelliteSize;
 
     glGenFramebuffers(1, &camera.framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, camera.framebuffer);
@@ -554,8 +689,8 @@ void ensureSatelliteCamera(SatelliteCamera& camera) {
     glGenTextures(1, &camera.color);
     glBindTexture(GL_TEXTURE_2D, camera.color);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera.size, camera.size, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, camera.color, 0);
@@ -571,6 +706,15 @@ void ensureSatelliteCamera(SatelliteCamera& camera) {
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void resizeSatelliteCamera(SatelliteCamera& camera, int size) {
+    if (camera.size == size) return;
+    camera.size = size;
+    glBindTexture(GL_TEXTURE_2D, camera.color);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera.size, camera.size, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glBindRenderbuffer(GL_RENDERBUFFER, camera.depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, camera.size, camera.size);
 }
 
 void addFace(std::vector<Vertex>& vertices, int x, int y, int z, Block block, const std::array<Vec3, 4>& corners, Vec3 normal) {
@@ -620,15 +764,25 @@ void addColoredBox(std::vector<Vertex>& vertices, Vec3 min, Vec3 max, std::array
     addColoredFace(vertices, {{{max.x, min.y, min.z}, {min.x, min.y, min.z}, {min.x, max.y, min.z}, {max.x, max.y, min.z}}}, {0, 0, -1}, color);
 }
 
-void rebuildSatelliteMesh(Mesh& satellite, Vec3 position) {
+void rebuildSatelliteMesh(Mesh& satellite) {
     std::vector<Vertex> vertices;
     vertices.reserve(180);
-    addColoredBox(vertices, position + Vec3{-0.42f, -0.24f, -0.32f}, position + Vec3{0.42f, 0.24f, 0.32f}, {0.42f, 0.43f, 0.41f, 1.0f});
-    addColoredBox(vertices, position + Vec3{-0.12f, -0.38f, -0.12f}, position + Vec3{0.12f, -0.24f, 0.12f}, {0.05f, 0.08f, 0.09f, 1.0f});
-    addColoredBox(vertices, position + Vec3{-1.38f, -0.04f, -0.36f}, position + Vec3{-0.48f, 0.04f, 0.36f}, {0.03f, 0.12f, 0.19f, 1.0f});
-    addColoredBox(vertices, position + Vec3{0.48f, -0.04f, -0.36f}, position + Vec3{1.38f, 0.04f, 0.36f}, {0.03f, 0.12f, 0.19f, 1.0f});
-    addColoredBox(vertices, position + Vec3{-0.06f, -0.08f, -0.56f}, position + Vec3{0.06f, 0.08f, -0.34f}, {0.58f, 0.08f, 0.04f, 1.0f});
+    addColoredBox(vertices, {-0.42f, -0.24f, -0.32f}, {0.42f, 0.24f, 0.32f}, {0.42f, 0.43f, 0.41f, 1.0f});
+    addColoredBox(vertices, {-0.12f, -0.38f, -0.12f}, {0.12f, -0.24f, 0.12f}, {0.05f, 0.08f, 0.09f, 1.0f});
+    addColoredBox(vertices, {-1.38f, -0.04f, -0.36f}, {-0.48f, 0.04f, 0.36f}, {0.03f, 0.12f, 0.19f, 1.0f});
+    addColoredBox(vertices, {0.48f, -0.04f, -0.36f}, {1.38f, 0.04f, 0.36f}, {0.03f, 0.12f, 0.19f, 1.0f});
+    addColoredBox(vertices, {-0.06f, -0.08f, -0.56f}, {0.06f, 0.08f, -0.34f}, {0.58f, 0.08f, 0.04f, 1.0f});
     uploadMesh(satellite, vertices);
+}
+
+void rebuildRocketMesh(Mesh& rocket) {
+    std::vector<Vertex> vertices;
+    vertices.reserve(120);
+    addColoredBox(vertices, {-0.14f, -0.14f, -0.42f}, {0.14f, 0.14f, 0.34f}, {0.30f, 0.32f, 0.30f, 1.0f});
+    addColoredBox(vertices, {-0.10f, -0.10f, 0.34f}, {0.10f, 0.10f, 0.55f}, {0.62f, 0.10f, 0.04f, 1.0f});
+    addColoredBox(vertices, {-0.20f, -0.035f, -0.48f}, {0.20f, 0.035f, -0.34f}, {0.10f, 0.095f, 0.085f, 1.0f});
+    addColoredBox(vertices, {-0.035f, -0.20f, -0.48f}, {0.035f, 0.20f, -0.34f}, {0.10f, 0.095f, 0.085f, 1.0f});
+    uploadMesh(rocket, vertices);
 }
 
 void rebuildMeshes(const World& world, Mesh& opaque, Mesh& transparentMesh) {
@@ -689,13 +843,25 @@ bool moveAxis(const World& world, Player& player, float& coord, float delta) {
     return false;
 }
 
-void updatePlayer(const World& world, Player& player, float dt) {
-    player.lookVelocityX = player.lookVelocityX * 0.42f + pendingMouseLook.x * 0.58f;
-    player.lookVelocityY = player.lookVelocityY * 0.42f + pendingMouseLook.y * 0.58f;
-    pendingMouseLook = {};
-    player.yaw -= player.lookVelocityX * 0.0021f;
-    player.pitch -= player.lookVelocityY * 0.0021f;
-    player.pitch = std::clamp(player.pitch, -1.45f, 1.45f);
+Vec3 rotateAroundAxis(Vec3 v, Vec3 axis, float angle) {
+    axis = normalize(axis);
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
+}
+
+void updatePlayer(const World& world, Player& player, float dt, bool allowLook = true) {
+    if (allowLook) {
+        player.lookVelocityX = player.lookVelocityX * 0.42f + pendingMouseLook.x * 0.58f;
+        player.lookVelocityY = player.lookVelocityY * 0.42f + pendingMouseLook.y * 0.58f;
+        pendingMouseLook = {};
+        player.yaw -= player.lookVelocityX * 0.0021f;
+        player.pitch -= player.lookVelocityY * 0.0021f;
+        player.pitch = std::clamp(player.pitch, -1.45f, 1.45f);
+    } else {
+        player.lookVelocityX = 0.0f;
+        player.lookVelocityY = 0.0f;
+    }
 
     Vec3 forward = normalize(forwardFromAngles(player.yaw, 0.0f));
     Vec3 right = normalize(cross(forward, {0.0f, 1.0f, 0.0f}));
@@ -750,6 +916,83 @@ void updatePlayer(const World& world, Player& player, float dt) {
     }
 }
 
+void fireRocket(Rocket& rocket, Vec3 eye, Vec3 look, float yaw, float pitch) {
+    rocket.active = true;
+    rocket.age = 0.0f;
+    rocket.position = eye + look * 1.1f;
+    rocket.direction = look;
+    Vec3 right = normalize(cross(rocket.direction, {0.0f, 1.0f, 0.0f}));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    rocket.up = normalize(cross(right, rocket.direction));
+    rocket.yaw = yaw;
+    rocket.pitch = pitch;
+}
+
+void triggerBlast(Blast& blast, Vec3 position) {
+    blast.active = true;
+    blast.age = 0.0f;
+    blast.position = position;
+}
+
+void updateRocket(const World& world, Rocket& rocket, Blast& blast, float dt, bool guided) {
+    if (!rocket.active) return;
+    rocket.age += dt;
+    if (guided) {
+        Vec3 right = normalize(cross(rocket.direction, rocket.up));
+        if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+        const float yawDelta = -pendingMouseLook.x * 0.0075f;
+        const float pitchDelta = -pendingMouseLook.y * 0.0075f;
+        rocket.direction = normalize(rotateAroundAxis(rocket.direction, rocket.up, yawDelta));
+        right = normalize(rotateAroundAxis(right, rocket.up, yawDelta));
+        rocket.direction = normalize(rotateAroundAxis(rocket.direction, right, pitchDelta));
+        rocket.up = normalize(cross(right, rocket.direction));
+        pendingMouseLook = {};
+    }
+    const float speed = guided ? 8.5f : 7.5f;
+    rocket.position = rocket.position + rocket.direction * (speed * dt);
+    const int x = static_cast<int>(std::floor(rocket.position.x));
+    const int y = static_cast<int>(std::floor(rocket.position.y));
+    const int z = static_cast<int>(std::floor(rocket.position.z));
+    const Vec3 worldCenter{WorldSize * 0.5f, WorldHeight * 0.5f, WorldSize * 0.5f};
+    const bool hitBlock = world.inBounds(x, y, z) && solid(world.get(x, y, z));
+    const bool tooFar = length(rocket.position - worldCenter) > 260.0f;
+    if (hitBlock) {
+        triggerBlast(blast, rocket.position);
+        rocket.active = false;
+    } else if (tooFar || rocket.age > 60.0f) {
+        rocket.active = false;
+    }
+}
+
+void updateBlast(Blast& blast, float dt) {
+    if (!blast.active) return;
+    blast.age += dt;
+    if (blast.age > 1.35f) blast.active = false;
+}
+
+bool destroyBlocksInBlast(World& world, Vec3 center, float radius) {
+    bool changed = false;
+    const int minX = std::max(0, static_cast<int>(std::floor(center.x - radius)));
+    const int maxX = std::min(WorldSize - 1, static_cast<int>(std::ceil(center.x + radius)));
+    const int minY = std::max(0, static_cast<int>(std::floor(center.y - radius)));
+    const int maxY = std::min(WorldHeight - 1, static_cast<int>(std::ceil(center.y + radius)));
+    const int minZ = std::max(0, static_cast<int>(std::floor(center.z - radius)));
+    const int maxZ = std::min(WorldSize - 1, static_cast<int>(std::ceil(center.z + radius)));
+    const float r2 = radius * radius;
+    for (int y = minY; y <= maxY; ++y) {
+        for (int z = minZ; z <= maxZ; ++z) {
+            for (int x = minX; x <= maxX; ++x) {
+                const Vec3 blockCenter{x + 0.5f, y + 0.5f, z + 0.5f};
+                if (dot(blockCenter - center, blockCenter - center) <= r2 && world.get(x, y, z) != Block::Air) {
+                    world.set(x, y, z, Block::Air);
+                    changed = true;
+                }
+            }
+        }
+    }
+    return changed;
+}
+
 bool raycastBlock(const World& world, Vec3 origin, Vec3 direction, float maxDistance, Vec3& hit, Vec3& previous) {
     Vec3 last = origin;
     for (float t = 0.0f; t < maxDistance; t += 0.04f) {
@@ -767,28 +1010,90 @@ bool raycastBlock(const World& world, Vec3 origin, Vec3 direction, float maxDist
     return false;
 }
 
-Vec3 satellitePositionAt(float time, SatelliteOrbit orbit) {
+Vec3 satellitePositionAt(const World& world, float time, SatelliteOrbit orbit, float orbitHeight) {
+    (void)world;
     const Vec3 worldCenter{WorldSize * 0.5f, WorldHeight * 0.5f, WorldSize * 0.5f};
     const float angle = time * 0.22f;
     if (orbit == SatelliteOrbit::OppositeFace) {
         return {
             worldCenter.x + std::cos(angle) * 25.0f,
-            worldCenter.y - ((WorldHeight + 26.0f) - worldCenter.y) - std::sin(angle * 0.67f) * 4.0f,
+            worldCenter.y - ((WorldHeight + orbitHeight) - worldCenter.y) - std::sin(angle * 0.67f) * 4.0f,
             worldCenter.z + std::sin(angle) * 25.0f
         };
     }
     if (orbit == SatelliteOrbit::Polar) {
-        return {
-            worldCenter.x + std::cos(angle) * 12.0f,
-            worldCenter.y + std::sin(angle) * 66.0f,
-            worldCenter.z + std::cos(angle) * 28.0f
+        constexpr float HalfWorld = WorldSize * 0.5f;
+        const float PolarAltitude = orbitHeight;
+        const float outer = HalfWorld + PolarAltitude;
+        const float side = HalfWorld * 2.0f;
+        const float corner = PolarAltitude * Pi * 0.5f;
+        const float lap = side * 4.0f + corner * 4.0f;
+        float d = std::fmod(angle / (Pi * 2.0f) * lap, lap);
+        if (d < 0.0f) d += lap;
+
+        auto cornerPoint = [PolarAltitude](float centerZ, float centerY, float start, float t) {
+            const float a = start - t * Pi * 0.5f;
+            return Vec2{centerZ + std::cos(a) * PolarAltitude, centerY + std::sin(a) * PolarAltitude};
         };
+
+        float z = -HalfWorld;
+        float y = outer;
+        if (d < side) {
+            z = -HalfWorld + d;
+        } else if ((d -= side) < corner) {
+            const Vec2 p = cornerPoint(HalfWorld, HalfWorld, Pi * 0.5f, d / corner);
+            z = p.x;
+            y = p.y;
+        } else if ((d -= corner) < side) {
+            y = HalfWorld - d;
+            z = outer;
+        } else if ((d -= side) < corner) {
+            const Vec2 p = cornerPoint(HalfWorld, -HalfWorld, 0.0f, d / corner);
+            z = p.x;
+            y = p.y;
+        } else if ((d -= corner) < side) {
+            y = -outer;
+            z = HalfWorld - d;
+        } else if ((d -= side) < corner) {
+            const Vec2 p = cornerPoint(-HalfWorld, -HalfWorld, -Pi * 0.5f, d / corner);
+            z = p.x;
+            y = p.y;
+        } else if ((d -= corner) < side) {
+            y = -HalfWorld + d;
+            z = -outer;
+        } else {
+            d -= side;
+            const Vec2 p = cornerPoint(-HalfWorld, HalfWorld, Pi, d / corner);
+            z = p.x;
+            y = p.y;
+        }
+        return {worldCenter.x, worldCenter.y + y, worldCenter.z + z};
     }
     return {
         worldCenter.x + std::cos(angle) * 25.0f,
-        WorldHeight + 26.0f + std::sin(angle * 0.67f) * 4.0f,
+        WorldHeight + orbitHeight + std::sin(angle * 0.67f) * 4.0f,
         worldCenter.z + std::sin(angle) * 25.0f
     };
+}
+
+Vec3 closestPointOnPlanetCube(Vec3 point) {
+    return {
+        std::clamp(point.x, 0.0f, static_cast<float>(WorldSize)),
+        std::clamp(point.y, 0.0f, static_cast<float>(WorldHeight)),
+        std::clamp(point.z, 0.0f, static_cast<float>(WorldSize))
+    };
+}
+
+SatelliteView makeSatelliteView(Vec3 position) {
+    SatelliteView view{};
+    view.position = position;
+    view.target = closestPointOnPlanetCube(position);
+    view.down = normalize(view.target - view.position);
+    view.up = std::abs(dot(view.down, {0.0f, 1.0f, 0.0f})) > 0.92f ? Vec3{0.0f, 0.0f, -1.0f} : Vec3{0.0f, 1.0f, 0.0f};
+    const Mat4 proj = perspective(46.0f * Pi / 180.0f, 1.0f, 0.2f, 180.0f);
+    const Mat4 camera = lookAt(view.position, view.target, view.up);
+    view.vp = multiply(proj, camera);
+    return view;
 }
 
 GLuint makeLineVao(GLuint& vbo) {
@@ -862,22 +1167,36 @@ void addUiRectRotated(std::vector<UiVertex>& vertices, Vec2 origin, float angle,
     addUiQuad(vertices, points, color);
 }
 
-void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, float progress, float time) {
-    const float action = (mining || building) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
+void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool rocketLauncher, float progress, float time) {
+    const float action = (mining || building || rocketLauncher) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
     const float idle = std::sin(time * 1.7f) * 0.006f;
     const float sx = -0.015f - action * 0.030f;
     const float sy = idle + action * 0.030f;
     const float swing = -0.50f - action * 0.28f;
     std::vector<UiVertex> vertices;
-    vertices.reserve(72);
+    vertices.reserve(108);
 
     const Vec2 pivot{0.73f + sx, 0.73f + sy};
-    addUiRectRotated(vertices, pivot, swing, -0.018f, -0.015f, 0.036f, 0.250f, {0.32f, 0.21f, 0.11f, 1.0f});
-    addUiRectRotated(vertices, pivot, swing, -0.026f, 0.070f, 0.052f, 0.030f, {0.20f, 0.13f, 0.07f, 1.0f});
-    const std::array<float, 4> toolColor = building ? std::array<float, 4>{0.38f, 0.40f, 0.38f, 1.0f} : std::array<float, 4>{0.05f, 0.60f, 0.58f, 1.0f};
-    const std::array<float, 4> toolShadow = building ? std::array<float, 4>{0.18f, 0.19f, 0.19f, 1.0f} : std::array<float, 4>{0.02f, 0.28f, 0.29f, 1.0f};
-    addUiRectRotated(vertices, pivot, swing, -0.105f, -0.060f, 0.180f, 0.050f, toolShadow);
-    addUiRectRotated(vertices, pivot, swing, -0.085f, -0.080f, 0.115f, 0.060f, toolColor);
+    if (rocketLauncher) {
+        const Vec2 tail{0.825f + sx, 0.800f + sy};
+        const Vec2 muzzle{0.555f, 0.545f};
+        const Vec2 aim{muzzle.x - tail.x, muzzle.y - tail.y};
+        const float launcherAngle = std::atan2(aim.y, aim.x);
+        const float launcherLength = std::sqrt(aim.x * aim.x + aim.y * aim.y);
+        addUiRectRotated(vertices, tail, launcherAngle, 0.000f, -0.034f, launcherLength, 0.068f, {0.055f, 0.064f, 0.060f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, -0.020f, -0.052f, 0.075f, 0.104f, {0.18f, 0.20f, 0.18f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.046f, -0.060f, 0.052f, 0.120f, {0.42f, 0.12f, 0.055f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.035f, -0.082f, 0.034f, 0.044f, {0.70f, 0.18f, 0.06f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, 0.080f, 0.020f, 0.052f, 0.086f, {0.11f, 0.115f, 0.105f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, 0.108f, 0.088f, 0.035f, 0.058f, {0.035f, 0.032f, 0.030f, 1.0f});
+    } else {
+        addUiRectRotated(vertices, pivot, swing, -0.018f, -0.015f, 0.036f, 0.250f, {0.32f, 0.21f, 0.11f, 1.0f});
+        addUiRectRotated(vertices, pivot, swing, -0.026f, 0.070f, 0.052f, 0.030f, {0.20f, 0.13f, 0.07f, 1.0f});
+        const std::array<float, 4> toolColor = building ? std::array<float, 4>{0.38f, 0.40f, 0.38f, 1.0f} : std::array<float, 4>{0.05f, 0.60f, 0.58f, 1.0f};
+        const std::array<float, 4> toolShadow = building ? std::array<float, 4>{0.18f, 0.19f, 0.19f, 1.0f} : std::array<float, 4>{0.02f, 0.28f, 0.29f, 1.0f};
+        addUiRectRotated(vertices, pivot, swing, -0.105f, -0.060f, 0.180f, 0.050f, toolShadow);
+        addUiRectRotated(vertices, pivot, swing, -0.085f, -0.080f, 0.115f, 0.060f, toolColor);
+    }
 
     addUiRect(vertices, 0.75f + sx, 0.76f + sy, 0.24f, 0.14f, {0.055f, 0.048f, 0.044f, 0.94f});
     addUiRect(vertices, 0.72f + sx, 0.70f + sy, 0.21f, 0.14f, {0.34f, 0.27f, 0.22f, 1.0f});
@@ -892,7 +1211,84 @@ void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool bu
     glBindVertexArray(0);
 }
 
-void drawSelection(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 hit, Vec3 previous, float progress, bool building, float time) {
+void drawReticle(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool guided, float time) {
+    const float pulse = guided ? 0.18f + std::sin(time * 12.0f) * 0.05f : 0.0f;
+    const std::array<float, 4> color = guided
+        ? std::array<float, 4>{0.90f, 0.12f, 0.06f, 0.92f}
+        : std::array<float, 4>{0.55f, 0.92f, 0.78f, 0.82f};
+    std::vector<UiVertex> vertices;
+    vertices.reserve(48);
+    const float cx = 0.5f;
+    const float cy = 0.5f;
+    const float gap = 0.014f + pulse * 0.015f;
+    const float len = 0.030f;
+    const float thick = 0.0035f;
+    addUiRect(vertices, cx - thick * 0.5f, cy - gap - len, thick, len, color);
+    addUiRect(vertices, cx - thick * 0.5f, cy + gap, thick, len, color);
+    addUiRect(vertices, cx - gap - len, cy - thick * 0.5f, len, thick, color);
+    addUiRect(vertices, cx + gap, cy - thick * 0.5f, len, thick, color);
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
+void drawMissileHud(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Rocket& rocket, int width, int height, float time) {
+    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
+    const float margin = 18.0f;
+    const float x = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
+    const float y = margin / static_cast<float>(height);
+    const float s = pixels / static_cast<float>(height);
+    const float aspectFix = static_cast<float>(height) / static_cast<float>(width);
+    const float cx = x + s * 0.5f * aspectFix;
+    const float cy = y + s * 0.5f;
+    const float panelW = pixels / static_cast<float>(width);
+    const float panelH = pixels / static_cast<float>(height);
+    const float roll = std::atan2(rocket.up.x, rocket.up.y) * 0.35f;
+    const float pitch = std::clamp(rocket.direction.y, -1.0f, 1.0f) * panelH * 0.24f;
+    const std::array<float, 4> green{0.42f, 1.0f, 0.62f, 0.78f};
+    const std::array<float, 4> dim{0.18f, 0.62f, 0.34f, 0.48f};
+    std::vector<UiVertex> vertices;
+    vertices.reserve(180);
+
+    for (int i = -2; i <= 2; ++i) {
+        const float lineY = pitch + static_cast<float>(i) * panelH * 0.075f;
+        const float lineW = panelW * (i == 0 ? 0.46f : 0.24f);
+        addUiRectRotated(vertices, {cx, cy}, roll, -lineW * 0.5f, lineY, lineW, 0.0032f, i == 0 ? green : dim);
+    }
+
+    addUiRect(vertices, cx - panelW * 0.055f, cy - 0.002f, panelW * 0.040f, 0.004f, green);
+    addUiRect(vertices, cx + panelW * 0.015f, cy - 0.002f, panelW * 0.040f, 0.004f, green);
+    addUiRect(vertices, cx - 0.002f, cy - panelH * 0.055f, 0.004f, panelH * 0.035f, green);
+    addUiRect(vertices, cx - 0.002f, cy + panelH * 0.020f, 0.004f, panelH * 0.035f, green);
+
+    const float tickY = y + panelH * 0.10f;
+    for (int i = 0; i < 7; ++i) {
+        const float tx = x + panelW * (0.20f + static_cast<float>(i) * 0.10f);
+        addUiRect(vertices, tx, tickY, 0.0035f, i == 3 ? 0.024f : 0.014f, dim);
+    }
+
+    const float blink = 0.55f + 0.45f * std::sin(time * 8.0f);
+    addUiRect(vertices, x + panelW * 0.07f, y + panelH * 0.08f, panelW * 0.070f, 0.004f, {0.95f, 0.18f, 0.08f, 0.45f + blink * 0.35f});
+    addUiRect(vertices, x + panelW * 0.07f, y + panelH * 0.08f, 0.004f, panelH * 0.070f, {0.95f, 0.18f, 0.08f, 0.45f + blink * 0.35f});
+    addUiRect(vertices, x + panelW * 0.86f, y + panelH * 0.08f, panelW * 0.070f, 0.004f, green);
+    addUiRect(vertices, x + panelW * 0.926f, y + panelH * 0.08f, 0.004f, panelH * 0.070f, green);
+    addUiRect(vertices, x + panelW * 0.07f, y + panelH * 0.916f, panelW * 0.070f, 0.004f, green);
+    addUiRect(vertices, x + panelW * 0.07f, y + panelH * 0.850f, 0.004f, panelH * 0.070f, green);
+    addUiRect(vertices, x + panelW * 0.86f, y + panelH * 0.916f, panelW * 0.070f, 0.004f, green);
+    addUiRect(vertices, x + panelW * 0.926f, y + panelH * 0.850f, 0.004f, panelH * 0.070f, green);
+
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
+void drawSelection(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 hit, Vec3 previous, float progress, bool building, float time) {
     const float x0 = hit.x - 0.015f;
     const float y0 = hit.y - 0.015f;
     const float z0 = hit.z - 0.015f;
@@ -950,11 +1346,11 @@ void drawSelection(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat
         remaining -= 1.0f;
     }
 
-    glUseProgram(lineProgram);
-    glUniformMatrix4fv(glGetUniformLocation(lineProgram, "uMVP"), 1, GL_FALSE, vp.m);
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
     const float pulse = 0.65f + 0.35f * std::sin(time * 4.0f);
-    if (building) glUniform4f(glGetUniformLocation(lineProgram, "uColor"), 0.55f, 0.72f + pulse * 0.16f, 0.82f, 0.72f + pulse * 0.23f);
-    else glUniform4f(glGetUniformLocation(lineProgram, "uColor"), 0.95f, 0.78f + pulse * 0.18f, 0.52f, 0.72f + pulse * 0.23f);
+    if (building) glUniform4f(lineUniforms.color, 0.55f, 0.72f + pulse * 0.16f, 0.82f, 0.72f + pulse * 0.23f);
+    else glUniform4f(lineUniforms.color, 0.95f, 0.78f + pulse * 0.18f, 0.52f, 0.72f + pulse * 0.23f);
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
@@ -963,17 +1359,17 @@ void drawSelection(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat
     glLineWidth(1.0f);
 }
 
-void drawVoxelScene(GLuint voxelProgram, const Mat4& vp, const Mesh& opaque, const Mesh& transparentMesh, const Mesh* satellite, Vec3 camera, Vec3 headlampDir, float time, float feedClarity = 0.0f, bool drawTransparent = true) {
-    glUseProgram(voxelProgram);
-    glUniformMatrix4fv(glGetUniformLocation(voxelProgram, "uMVP"), 1, GL_FALSE, vp.m);
+void drawVoxelScene(const VoxelUniforms& uniforms, const Mat4& vp, const Mesh& opaque, const Mesh& transparentMesh, const Mesh* satellite, Vec3 satellitePosition, const Mesh* rocketMesh, Vec3 rocketPosition, Vec3 rocketDirection, Vec3 rocketUp, Vec3 camera, Vec3 headlampDir, float time, float feedClarity = 0.0f, bool drawTransparent = true) {
+    glUseProgram(uniforms.program);
+    glUniformMatrix4fv(uniforms.mvp, 1, GL_FALSE, vp.m);
     Mat4 model = identity();
-    glUniformMatrix4fv(glGetUniformLocation(voxelProgram, "uModel"), 1, GL_FALSE, model.m);
-    glUniform3f(glGetUniformLocation(voxelProgram, "uCamera"), camera.x, camera.y, camera.z);
-    glUniform3f(glGetUniformLocation(voxelProgram, "uHeadlampDir"), headlampDir.x, headlampDir.y, headlampDir.z);
-    glUniform3f(glGetUniformLocation(voxelProgram, "uSunDir"), -0.18f, -0.72f, -0.35f);
-    glUniform3f(glGetUniformLocation(voxelProgram, "uFogColor"), 0.12f, 0.105f, 0.095f);
-    glUniform1f(glGetUniformLocation(voxelProgram, "uTime"), time);
-    glUniform1f(glGetUniformLocation(voxelProgram, "uFeedClarity"), feedClarity);
+    glUniformMatrix4fv(uniforms.model, 1, GL_FALSE, model.m);
+    glUniform3f(uniforms.camera, camera.x, camera.y, camera.z);
+    glUniform3f(uniforms.headlampDir, headlampDir.x, headlampDir.y, headlampDir.z);
+    glUniform3f(uniforms.sunDir, -0.18f, -0.72f, -0.35f);
+    glUniform3f(uniforms.fogColor, 0.12f, 0.105f, 0.095f);
+    glUniform1f(uniforms.time, time);
+    glUniform1f(uniforms.feedClarity, feedClarity);
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -981,8 +1377,21 @@ void drawVoxelScene(GLuint voxelProgram, const Mat4& vp, const Mesh& opaque, con
     glDrawArrays(GL_TRIANGLES, 0, opaque.count);
 
     if (satellite && satellite->count > 0) {
+        model = translation(satellitePosition);
+        glUniformMatrix4fv(uniforms.model, 1, GL_FALSE, model.m);
         glBindVertexArray(satellite->vao);
         glDrawArrays(GL_TRIANGLES, 0, satellite->count);
+        model = identity();
+        glUniformMatrix4fv(uniforms.model, 1, GL_FALSE, model.m);
+    }
+
+    if (rocketMesh && rocketMesh->count > 0) {
+        model = transformFromBasis(rocketPosition, rocketDirection, rocketUp);
+        glUniformMatrix4fv(uniforms.model, 1, GL_FALSE, model.m);
+        glBindVertexArray(rocketMesh->vao);
+        glDrawArrays(GL_TRIANGLES, 0, rocketMesh->count);
+        model = identity();
+        glUniformMatrix4fv(uniforms.model, 1, GL_FALSE, model.m);
     }
 
     if (drawTransparent) {
@@ -996,23 +1405,23 @@ void drawVoxelScene(GLuint voxelProgram, const Mat4& vp, const Mesh& opaque, con
     }
 }
 
-void drawOrbitTrail(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Mat4& vp, float time, SatelliteOrbit orbit) {
+void drawOrbitTrail(const World& world, const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, float time, SatelliteOrbit orbit, float orbitHeight) {
     std::vector<float> data;
-    constexpr int Segments = 128;
+    constexpr int Segments = 64;
     data.reserve(Segments * 3);
     const float baseAngle = time * 0.22f;
     for (int i = 0; i < Segments; ++i) {
         const float angle = (static_cast<float>(i) / static_cast<float>(Segments)) * Pi * 2.0f;
         const float orbitTime = (baseAngle + angle) / 0.22f;
-        const Vec3 p = satellitePositionAt(orbitTime, orbit);
+        const Vec3 p = satellitePositionAt(world, orbitTime, orbit, orbitHeight);
         data.push_back(p.x);
         data.push_back(p.y);
         data.push_back(p.z);
     }
 
-    glUseProgram(lineProgram);
-    glUniformMatrix4fv(glGetUniformLocation(lineProgram, "uMVP"), 1, GL_FALSE, vp.m);
-    glUniform4f(glGetUniformLocation(lineProgram, "uColor"), 0.86f, 0.18f, 0.08f, 0.36f);
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    glUniform4f(lineUniforms.color, 0.86f, 0.18f, 0.08f, 0.36f);
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
@@ -1021,18 +1430,97 @@ void drawOrbitTrail(GLuint lineProgram, GLuint lineVao, GLuint lineVbo, const Ma
     glLineWidth(1.0f);
 }
 
-void drawSatelliteFeed(GLuint textureProgram, GLuint texture, int width, int height) {
+void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, const Blast& blast) {
+    if (!blast.active) return;
+    const float t = std::clamp(blast.age / 1.35f, 0.0f, 1.0f);
+    const float radius = 1.2f + t * 9.0f;
+    std::vector<float> data;
+    data.reserve(3 * 220);
+    auto addLine = [&data](Vec3 a, Vec3 b) {
+        data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
+        data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
+    };
+    constexpr int Segments = 36;
+    for (int i = 0; i < Segments; ++i) {
+        const float a0 = static_cast<float>(i) / static_cast<float>(Segments) * Pi * 2.0f;
+        const float a1 = static_cast<float>(i + 1) / static_cast<float>(Segments) * Pi * 2.0f;
+        addLine(blast.position + Vec3{std::cos(a0) * radius, std::sin(a0) * radius, 0.0f},
+                blast.position + Vec3{std::cos(a1) * radius, std::sin(a1) * radius, 0.0f});
+        addLine(blast.position + Vec3{std::cos(a0) * radius, 0.0f, std::sin(a0) * radius},
+                blast.position + Vec3{std::cos(a1) * radius, 0.0f, std::sin(a1) * radius});
+    }
+    for (int i = 0; i < 12; ++i) {
+        const float a = static_cast<float>(i) / 12.0f * Pi * 2.0f;
+        const Vec3 dir = normalize({std::cos(a), std::sin(a * 1.7f) * 0.45f, std::sin(a)});
+        addLine(blast.position, blast.position + dir * (radius * 1.28f));
+    }
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    glUniform4f(lineUniforms.color, 1.0f, 0.32f + (1.0f - t) * 0.45f, 0.06f, (1.0f - t) * 0.95f);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(3.0f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
+void drawPlanetCubeWireframe(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp) {
+    constexpr float min = 0.0f;
+    constexpr float max = static_cast<float>(WorldSize);
+    const std::array<Vec3, 8> corners{{
+        {min, min, min}, {max, min, min}, {max, max, min}, {min, max, min},
+        {min, min, max}, {max, min, max}, {max, max, max}, {min, max, max}
+    }};
+    const std::array<int, 24> edges{{0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7}};
+    std::vector<float> data;
+    data.reserve(edges.size() * 3);
+    for (int index : edges) {
+        data.push_back(corners[index].x);
+        data.push_back(corners[index].y);
+        data.push_back(corners[index].z);
+    }
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    glUniform4f(lineUniforms.color, 0.92f, 0.98f, 0.72f, 0.88f);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(2.0f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
+void drawSatelliteFeed(const TextureUniforms& textureUniforms, GLuint texture, int width, int height, float time) {
     const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
     const float margin = 18.0f;
     const float x0 = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
     const float y0 = (static_cast<float>(height) - pixels - margin) / static_cast<float>(height);
     const float x1 = (static_cast<float>(width) - margin) / static_cast<float>(width);
     const float y1 = (static_cast<float>(height) - margin) / static_cast<float>(height);
-    glUseProgram(textureProgram);
-    glUniform4f(glGetUniformLocation(textureProgram, "uRect"), x0, y0, x1, y1);
+    glUseProgram(textureUniforms.program);
+    glUniform4f(textureUniforms.rect, x0, y0, x1, y1);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glUniform1i(glGetUniformLocation(textureProgram, "uTexture"), 0);
+    glUniform1i(textureUniforms.texture, 0);
+    glUniform1f(textureUniforms.time, time);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+void drawMissileFeed(const MissileFeedUniforms& uniforms, GLuint texture, int width, int height) {
+    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
+    const float margin = 18.0f;
+    const float x0 = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
+    const float y0 = (static_cast<float>(height) - pixels - margin) / static_cast<float>(height);
+    const float x1 = (static_cast<float>(width) - margin) / static_cast<float>(width);
+    const float y1 = (static_cast<float>(height) - margin) / static_cast<float>(height);
+    glUseProgram(uniforms.program);
+    glUniform4f(uniforms.rect, x0, y0, x1, y1);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(uniforms.texture, 0);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
@@ -1390,17 +1878,46 @@ const char* textureFragmentShader = R"GLSL(
 #version 330 core
 in vec2 vUV;
 uniform sampler2D uTexture;
+uniform float uTime;
+out vec4 FragColor;
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(41.7, 289.3))) * 15342.731);
+}
+void main() {
+    vec2 uv = vUV;
+    float tear = step(0.986, hash(vec2(floor(uv.y * 34.0), floor(uTime * 9.0)))) * 0.020;
+    uv.x = clamp(uv.x + tear * sin(uv.y * 70.0 + uTime * 11.0), 0.0, 1.0);
+    vec3 color = texture(uTexture, uv).rgb;
+    vec2 edge = min(vUV, 1.0 - vUV);
+    float frame = 1.0 - smoothstep(0.012, 0.026, min(edge.x, edge.y));
+    float grey = dot(color, vec3(0.299, 0.587, 0.114));
+    float row = floor(vUV.y * 95.0);
+    float staticNoise = hash(vec2(floor(vUV.x * 120.0) + floor(uTime * 22.0), row));
+    float scan = sin(vUV.y * 520.0) * 0.035;
+    float band = smoothstep(0.035, 0.0, abs(fract(vUV.y * 4.0 + uTime * 0.35) - 0.5)) * 0.16;
+    float dropout = step(0.975, hash(vec2(row, floor(uTime * 7.0)))) * 0.55;
+    float signal = grey * 0.86 + staticNoise * 0.16 + scan - band - dropout;
+    vec3 cctv = vec3(signal * 0.42, signal * 1.08, signal * 0.72);
+    float vignette = smoothstep(0.78, 0.18, distance(vUV, vec2(0.5)));
+    cctv *= 0.64 + vignette * 0.62;
+    cctv = floor(max(cctv, vec3(0.0)) * 18.0) / 18.0;
+    cctv = mix(cctv, vec3(0.004, 0.010, 0.006), frame * 0.84);
+    FragColor = vec4(cctv, 1.0);
+}
+)GLSL";
+
+const char* missileFeedFragmentShader = R"GLSL(
+#version 330 core
+in vec2 vUV;
+uniform sampler2D uTexture;
 out vec4 FragColor;
 void main() {
     vec3 color = texture(uTexture, vUV).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
     float frame = 1.0 - smoothstep(0.010, 0.018, min(edge.x, edge.y));
-    float grey = dot(color, vec3(0.299, 0.587, 0.114));
-    vec3 cctv = vec3(grey * 0.82, grey * 0.98, grey * 0.88);
-    float scan = sin(vUV.y * 420.0) * 0.018;
-    cctv = cctv * 1.18 + scan;
-    cctv = mix(cctv, vec3(0.010, 0.016, 0.012), frame * 0.72);
-    FragColor = vec4(cctv, 1.0);
+    color = pow(max(color, vec3(0.0)), vec3(0.88)) * 1.18;
+    color = mix(color, vec3(0.02, 0.025, 0.022), frame * 0.58);
+    FragColor = vec4(color, 1.0);
 }
 )GLSL";
 
@@ -1412,7 +1929,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_SAMPLES, 0);
 
     window = glfwCreateWindow(1280, 800, "Dead Cube World - WASD move, mouse look, click build/mine, R regenerate, F1 mouse", nullptr, nullptr);
     if (!window) {
@@ -1437,6 +1954,13 @@ int main() {
     GLuint lineProgram = makeProgram(lineVertexShader, lineFragmentShader);
     GLuint uiProgram = makeProgram(uiVertexShader, uiFragmentShader);
     GLuint textureProgram = makeProgram(textureVertexShader, textureFragmentShader);
+    GLuint missileFeedProgram = makeProgram(textureVertexShader, missileFeedFragmentShader);
+    const VoxelUniforms voxelUniform = voxelUniforms(voxelProgram);
+    const VoxelUniforms satelliteUniform = voxelUniforms(satelliteProgram);
+    const LineUniforms lineUniform = lineUniforms(lineProgram);
+    const TextureUniforms textureUniform = textureUniforms(textureProgram);
+    const MissileFeedUniforms missileFeedUniform = missileFeedUniforms(missileFeedProgram);
+    const GLint skyTimeUniform = glGetUniformLocation(skyProgram, "uTime");
     GLuint emptyVao = 0;
     glGenVertexArrays(1, &emptyVao);
     GLuint lineVbo = 0;
@@ -1449,7 +1973,10 @@ int main() {
     Mesh opaque;
     Mesh transparentMesh;
     Mesh satelliteMesh;
+    Mesh rocketMesh;
     rebuildMeshes(world, opaque, transparentMesh);
+    rebuildSatelliteMesh(satelliteMesh);
+    rebuildRocketMesh(rocketMesh);
 
     BuildType selectedBuild = BuildType::Normal;
     double lastTime = glfwGetTime();
@@ -1458,11 +1985,17 @@ int main() {
     float miningTimer = 0.0f;
     float buildingTimer = 0.0f;
     float buildCooldown = 0.0f;
-    SatelliteOrbit satelliteOrbit = SatelliteOrbit::CurrentFace;
+    SatelliteOrbit satelliteOrbit = SatelliteOrbit::Polar;
+    float satelliteOrbitHeight = 56.0f;
+    float targetSatelliteOrbitHeight = satelliteOrbitHeight;
+    double lastSatelliteFeedTime = -1.0;
+    bool satelliteFeedDirty = true;
+    bool rocketLauncherArmed = false;
+    Rocket rocket;
+    Blast blast;
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
-    glEnable(GL_MULTISAMPLE);
 
     while (!glfwWindowShouldClose(window)) {
         const double now = glfwGetTime();
@@ -1478,29 +2011,61 @@ int main() {
         }
         if (keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
         if (keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
-        if (keyPressed(GLFW_KEY_O)) satelliteOrbit = nextOrbit(satelliteOrbit);
+        if (keyPressed(GLFW_KEY_M)) rocketLauncherArmed = !rocketLauncherArmed;
+        if (keyPressed(GLFW_KEY_MINUS)) {
+            targetSatelliteOrbitHeight = std::max(16.0f, targetSatelliteOrbitHeight - 8.0f);
+            satelliteFeedDirty = true;
+        }
+        if (keyPressed(GLFW_KEY_EQUAL)) {
+            targetSatelliteOrbitHeight = std::min(140.0f, targetSatelliteOrbitHeight + 8.0f);
+            satelliteFeedDirty = true;
+        }
+        if (keyPressed(GLFW_KEY_O)) {
+            satelliteOrbit = nextOrbit(satelliteOrbit);
+            satelliteFeedDirty = true;
+        }
         if (keyPressed(GLFW_KEY_R)) {
             world.seed += 1337;
             generateWorld(world);
             rebuildMeshes(world, opaque, transparentMesh);
             respawnPlayer(world, player);
+            satelliteFeedDirty = true;
         }
 
-        updatePlayer(world, player, dt);
+        satelliteOrbitHeight += (targetSatelliteOrbitHeight - satelliteOrbitHeight) * std::min(1.0f, dt * 2.4f);
+        if (std::abs(targetSatelliteOrbitHeight - satelliteOrbitHeight) > 0.05f) satelliteFeedDirty = true;
+
+        const bool missileGuided = rocket.active && rocket.age >= 1.0f;
+        updatePlayer(world, player, dt, !missileGuided);
         const Vec3 eye{player.position.x, player.position.y + PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
-        const Vec3 worldCenter{WorldSize * 0.5f, WorldHeight * 0.5f, WorldSize * 0.5f};
-        const Vec3 satellitePosition = satellitePositionAt(static_cast<float>(now), satelliteOrbit);
-        rebuildSatelliteMesh(satelliteMesh, satellitePosition);
+        const Vec3 satellitePosition = satellitePositionAt(world, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
 
         Vec3 hit{};
         Vec3 previous{};
         bool hasHit = raycastBlock(world, eye, look, 8.0f, hit, previous);
         const bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         const bool rightDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+        static bool wasRocketFireDown = false;
+        const bool rocketFirePressed = rocketLauncherArmed && leftDown && !wasRocketFireDown;
+        wasRocketFireDown = rocketLauncherArmed && leftDown;
+        if (rocketFirePressed && !rocket.active) {
+            fireRocket(rocket, eye, look, player.yaw, player.pitch);
+            satelliteFeedDirty = true;
+        }
+        const bool rocketWasActive = rocket.active;
+        updateRocket(world, rocket, blast, dt, rocket.active && rocket.age >= 1.0f);
+        if (rocketWasActive && !rocket.active && blast.active && blast.age == 0.0f) {
+            if (destroyBlocksInBlast(world, blast.position, 4.2f)) {
+                rebuildMeshes(world, opaque, transparentMesh);
+                satelliteFeedDirty = true;
+            }
+        }
+        updateBlast(blast, dt);
+        const bool rocketBlocksTools = rocketLauncherArmed || rocket.active;
 
         buildCooldown = std::max(0.0f, buildCooldown - dt);
-        if (mouseCaptured && hasHit && leftDown) {
+        if (!rocketBlocksTools && mouseCaptured && hasHit && leftDown) {
             if (!sameBlockCell(miningTarget, hit)) {
                 miningTarget = hit;
                 miningTimer = 0.0f;
@@ -1510,6 +2075,7 @@ int main() {
             if (miningTimer >= mineDuration(targetBlock)) {
                 world.set(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z), Block::Air);
                 rebuildMeshes(world, opaque, transparentMesh);
+                satelliteFeedDirty = true;
                 miningTimer = 0.0f;
                 miningTarget = {-9999.0f, -9999.0f, -9999.0f};
             }
@@ -1518,7 +2084,7 @@ int main() {
             miningTarget = {-9999.0f, -9999.0f, -9999.0f};
         }
 
-        if (mouseCaptured && hasHit && rightDown) {
+        if (!rocketBlocksTools && mouseCaptured && hasHit && rightDown) {
             const int x = static_cast<int>(previous.x);
             const int y = static_cast<int>(previous.y);
             const int z = static_cast<int>(previous.z);
@@ -1533,6 +2099,7 @@ int main() {
                         world.set(x, y, z, blockForBuildType(selectedBuild));
                         if (playerCollides(world, player.position)) world.set(x, y, z, Block::Air);
                         rebuildMeshes(world, opaque, transparentMesh);
+                        satelliteFeedDirty = true;
                         buildCooldown = 0.18f;
                         buildingTimer = 0.0f;
                     }
@@ -1547,26 +2114,46 @@ int main() {
         int height = 1;
         glfwGetFramebufferSize(window, &width, &height);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, satelliteCamera.framebuffer);
-        glViewport(0, 0, satelliteCamera.size, satelliteCamera.size);
-        glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        const Mat4 satelliteProj = perspective(46.0f * Pi / 180.0f, 1.0f, 0.2f, 150.0f);
-        const Vec3 satelliteLookTarget = satelliteOrbit == SatelliteOrbit::Polar
-            ? worldCenter
-            : Vec3{satellitePosition.x, worldCenter.y, satellitePosition.z};
-        const Vec3 satelliteDown = normalize(satelliteLookTarget - satellitePosition);
-        const Mat4 satelliteView = lookAt(satellitePosition, satelliteLookTarget, {0.0f, 0.0f, -1.0f});
-        const Mat4 satelliteVp = multiply(satelliteProj, satelliteView);
-        drawVoxelScene(satelliteProgram, satelliteVp, opaque, transparentMesh, nullptr, satellitePosition, satelliteDown, static_cast<float>(now), 0.0f, false);
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        const bool missileCameraActive = rocket.active && rocket.age >= 1.0f;
+        if (satelliteFeedDirty || missileCameraActive || now - lastSatelliteFeedTime >= 0.12) {
+            resizeSatelliteCamera(satelliteCamera, missileCameraActive ? satelliteCamera.missileSize : satelliteCamera.satelliteSize);
+            glBindFramebuffer(GL_FRAMEBUFFER, satelliteCamera.framebuffer);
+            glViewport(0, 0, satelliteCamera.size, satelliteCamera.size);
+            glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            if (missileCameraActive) {
+                const Vec3 missileEye = rocket.position + rocket.direction * 0.35f;
+                const Vec3 missileTarget = missileEye + rocket.direction;
+                glDisable(GL_DEPTH_TEST);
+                glUseProgram(skyProgram);
+                glUniform1f(skyTimeUniform, static_cast<float>(now));
+                glBindVertexArray(emptyVao);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                glEnable(GL_DEPTH_TEST);
+                const Mat4 missileProj = perspective(58.0f * Pi / 180.0f, 1.0f, 0.05f, 220.0f);
+                const Mat4 missileView = lookAt(missileEye, missileTarget, rocket.up);
+                const Mat4 missileVp = multiply(missileProj, missileView);
+                drawVoxelScene(voxelUniform, missileVp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, missileEye, rocket.direction, static_cast<float>(now), 1.0f, true);
+            } else {
+                const SatelliteView satelliteView = makeSatelliteView(satellitePosition);
+                drawVoxelScene(satelliteUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, static_cast<float>(now), 0.0f, false);
+                glDisable(GL_DEPTH_TEST);
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                drawPlanetCubeWireframe(lineUniform, lineVao, lineVbo, satelliteView.vp);
+                glDisable(GL_BLEND);
+                glEnable(GL_DEPTH_TEST);
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            lastSatelliteFeedTime = now;
+            satelliteFeedDirty = false;
+        }
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glDisable(GL_DEPTH_TEST);
         glUseProgram(skyProgram);
-        glUniform1f(glGetUniformLocation(skyProgram, "uTime"), static_cast<float>(now));
+        glUniform1f(skyTimeUniform, static_cast<float>(now));
         glBindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glEnable(GL_DEPTH_TEST);
@@ -1575,16 +2162,17 @@ int main() {
         const Mat4 view = lookAt(eye, eye + look, {0.0f, 1.0f, 0.0f});
         const Mat4 vp = multiply(proj, view);
 
-        drawVoxelScene(voxelProgram, vp, opaque, transparentMesh, &satelliteMesh, eye, look, static_cast<float>(now));
+        drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, rocket.active ? &rocketMesh : nullptr, rocket.position, rocket.direction, rocket.up, eye, look, static_cast<float>(now));
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawOrbitTrail(lineProgram, lineVao, lineVbo, vp, static_cast<float>(now), satelliteOrbit);
+        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
+        drawBlast(lineUniform, lineVao, lineVbo, vp, blast);
         glDisable(GL_BLEND);
 
         float interactionProgress = 0.0f;
         bool showingBuild = false;
         bool showingMine = false;
-        if (hasHit) {
+        if (!rocketBlocksTools && hasHit) {
             if (rightDown && sameBlockCell(buildingTarget, previous)) {
                 interactionProgress = std::clamp(buildingTimer / buildDuration(selectedBuild), 0.0f, 1.0f);
                 showingBuild = true;
@@ -1593,7 +2181,7 @@ int main() {
                 interactionProgress = std::clamp(miningTimer / mineDuration(targetBlock), 0.0f, 1.0f);
                 showingMine = true;
             }
-            drawSelection(lineProgram, lineVao, lineVbo, vp, hit, previous, interactionProgress, showingBuild, static_cast<float>(now));
+            drawSelection(lineUniform, lineVao, lineVbo, vp, hit, previous, interactionProgress, showingBuild, static_cast<float>(now));
         }
 
         glDisable(GL_DEPTH_TEST);
@@ -1601,14 +2189,20 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindVertexArray(emptyVao);
-        drawSatelliteFeed(textureProgram, satelliteCamera.color, width, height);
-        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, interactionProgress, static_cast<float>(now));
+        if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, width, height);
+        else drawSatelliteFeed(textureUniform, satelliteCamera.color, width, height, static_cast<float>(now));
+        if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, width, height, static_cast<float>(now));
+        if (rocketLauncherArmed || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, static_cast<float>(now));
+        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, rocketLauncherArmed, interactionProgress, static_cast<float>(now));
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
         const std::string title = "Dead Cube World - " + std::to_string(opaque.count / 6) + " bleak faces - build: "
             + buildTypeName(selectedBuild) + " - sat: " + orbitName(satelliteOrbit)
+            + " height " + std::to_string(static_cast<int>(targetSatelliteOrbitHeight))
+            + (rocketLauncherArmed ? " - rocket armed" : "")
+            + (missileCameraActive ? " - missile nose cam" : "")
             + " - seed " + std::to_string(world.seed) + " - hold click to mine/build";
         glfwSetWindowTitle(window, title.c_str());
         glfwSwapBuffers(window);
