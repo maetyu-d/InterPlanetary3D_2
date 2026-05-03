@@ -164,12 +164,25 @@ enum class Block : std::uint8_t {
     Bone,
     ObsidianGlass,
     Fuel,
-    Plutonium
+    Plutonium,
+    Sand,
+    Sandstone,
+    DesertRock,
+    Grass,
+    Dirt,
+    Wood,
+    Leaves
 };
 
 enum class BuildType {
     Normal,
     Hard
+};
+
+enum class WorldTheme {
+    Dead,
+    Desert,
+    Lush
 };
 
 enum class SatelliteOrbit {
@@ -267,6 +280,7 @@ struct SatelliteView {
 struct World {
     std::vector<Block> blocks;
     int seed = 0;
+    WorldTheme theme = WorldTheme::Dead;
 
     World() : blocks(WorldSize * WorldHeight * WorldSize, Block::Air) {}
 
@@ -327,6 +341,12 @@ struct Blast {
     Vec3 position{};
 };
 
+struct Cell {
+    int x = 0;
+    int y = 0;
+    int z = 0;
+};
+
 GLFWwindow* window = nullptr;
 bool mouseCaptured = true;
 bool firstMouse = true;
@@ -383,6 +403,10 @@ bool transparent(Block block) {
     return block == Block::Air || block == Block::DeadCrystal || block == Block::ObsidianGlass;
 }
 
+bool spawnSurface(Block block) {
+    return solid(block) && block != Block::Wood;
+}
+
 float blockKind(Block block) {
     switch (block) {
         case Block::Ash: return 1.0f;
@@ -394,6 +418,13 @@ float blockKind(Block block) {
         case Block::ObsidianGlass: return 9.0f;
         case Block::Fuel: return 10.0f;
         case Block::Plutonium: return 11.0f;
+        case Block::Sand: return 12.0f;
+        case Block::Sandstone: return 13.0f;
+        case Block::DesertRock: return 14.0f;
+        case Block::Grass: return 15.0f;
+        case Block::Dirt: return 16.0f;
+        case Block::Wood: return 17.0f;
+        case Block::Leaves: return 18.0f;
         case Block::Air: break;
     }
     return 0.0f;
@@ -412,6 +443,13 @@ std::array<float, 4> colorOf(Block block, int x, int y, int z) {
         case Block::ObsidianGlass: c = {0.050f, 0.052f, 0.060f, 0.55f}; speckle = 0.0f; break;
         case Block::Fuel: c = {0.03f, 0.45f, 1.0f, 1.0f}; speckle = 0.0f; break;
         case Block::Plutonium: c = {0.88f, 1.0f, 0.05f, 1.0f}; speckle = 0.0f; break;
+        case Block::Sand: c = {0.64f, 0.52f, 0.32f, 1.0f}; break;
+        case Block::Sandstone: c = {0.48f, 0.38f, 0.22f, 1.0f}; break;
+        case Block::DesertRock: c = {0.28f, 0.22f, 0.15f, 1.0f}; break;
+        case Block::Grass: c = {0.13f, 0.46f, 0.12f, 1.0f}; break;
+        case Block::Dirt: c = {0.25f, 0.17f, 0.10f, 1.0f}; break;
+        case Block::Wood: c = {0.34f, 0.20f, 0.10f, 1.0f}; break;
+        case Block::Leaves: c = {0.08f, 0.42f, 0.10f, 1.0f}; speckle = 0.0f; break;
         case Block::Air: c = {0.0f, 0.0f, 0.0f, 0.0f}; break;
     }
     c[0] = std::clamp(c[0] + speckle, 0.0f, 1.0f);
@@ -420,12 +458,41 @@ std::array<float, 4> colorOf(Block block, int x, int y, int z) {
     return c;
 }
 
-Block blockForBuildType(BuildType type) {
+Block blockForBuildType(BuildType type, WorldTheme theme) {
+    if (theme == WorldTheme::Desert) return type == BuildType::Normal ? Block::Sand : Block::DesertRock;
+    if (theme == WorldTheme::Lush) return type == BuildType::Normal ? Block::Dirt : Block::Wood;
     return type == BuildType::Normal ? Block::Ash : Block::Basalt;
 }
 
 const char* buildTypeName(BuildType type) {
     return type == BuildType::Normal ? "normal" : "hard";
+}
+
+const char* themeName(WorldTheme theme) {
+    switch (theme) {
+        case WorldTheme::Dead: return "dead";
+        case WorldTheme::Desert: return "desert";
+        case WorldTheme::Lush: return "lush";
+    }
+    return "dead";
+}
+
+WorldTheme nextTheme(WorldTheme theme) {
+    switch (theme) {
+        case WorldTheme::Dead: return WorldTheme::Desert;
+        case WorldTheme::Desert: return WorldTheme::Lush;
+        case WorldTheme::Lush: return WorldTheme::Dead;
+    }
+    return WorldTheme::Dead;
+}
+
+int themeShaderValue(WorldTheme theme) {
+    switch (theme) {
+        case WorldTheme::Dead: return 0;
+        case WorldTheme::Desert: return 1;
+        case WorldTheme::Lush: return 2;
+    }
+    return 0;
 }
 
 const char* orbitName(SatelliteOrbit orbit) {
@@ -481,6 +548,13 @@ float mineDuration(Block block) {
         case Block::ObsidianGlass: duration = 1.35f; break;
         case Block::Fuel: duration = 1.05f; break;
         case Block::Plutonium: duration = 1.45f; break;
+        case Block::Sand: duration = 0.38f; break;
+        case Block::Sandstone: duration = 0.78f; break;
+        case Block::DesertRock: duration = 1.10f; break;
+        case Block::Grass: duration = 0.35f; break;
+        case Block::Dirt: duration = 0.45f; break;
+        case Block::Wood: duration = 0.95f; break;
+        case Block::Leaves: duration = 0.32f; break;
         case Block::Air: break;
     }
     return duration * MiningDifficulty;
@@ -497,10 +571,30 @@ int faceProfile(int face) {
     return 0;
 }
 
-int faceTerrainHeight(int u, int v, int face, int seed) {
+int faceTerrainHeight(int u, int v, int face, int seed, WorldTheme theme) {
     const int profile = faceProfile(face);
     const float nx = static_cast<float>(u) / 22.0f;
     const float nz = static_cast<float>(v) / 22.0f;
+    if (theme == WorldTheme::Desert) {
+        const float broad = fractalNoise(nx * 0.82f + 11.0f, nz * 0.82f - 5.0f, seed + profile * 503 + 1201);
+        const float dunes = std::abs(fractalNoise(nx * 2.8f - 17.0f, nz * 1.55f + 23.0f, seed + profile * 503 + 1229) - 0.5f) * 2.0f;
+        const float mesas = fractalNoise(nx * 1.35f + 41.0f, nz * 1.35f - 31.0f, seed + profile * 503 + 1291);
+        const float windScars = fractalNoise(nx * 7.5f + 3.0f, nz * 2.2f - 9.0f, seed + profile * 503 + 1327);
+        int height = 5 + static_cast<int>(broad * 14.0f + dunes * 12.0f);
+        if (mesas > 0.72f) height += 9;
+        if (windScars > 0.72f) height += 3;
+        if (windScars < 0.20f) height -= 3;
+        height = (height / 2) * 2;
+        return std::clamp(height, 2, FaceRelief - 2);
+    }
+    if (theme == WorldTheme::Lush) {
+        const float rolling = fractalNoise(nx * 0.80f - 6.0f, nz * 0.80f + 14.0f, seed + profile * 503 + 2201);
+        const float hills = fractalNoise(nx * 1.80f + 27.0f, nz * 1.80f - 19.0f, seed + profile * 503 + 2237);
+        const float ridges = std::abs(fractalNoise(nx * 3.1f - 11.0f, nz * 3.1f + 5.0f, seed + profile * 503 + 2293) - 0.5f) * 2.0f;
+        int height = 8 + static_cast<int>(rolling * 15.0f + hills * 11.0f + ridges * 4.0f);
+        height = (height / 2) * 2;
+        return std::clamp(height, 5, FaceRelief - 5);
+    }
     const float continent = fractalNoise(nx, nz, seed + profile * 503);
     const float ridges = std::abs(fractalNoise(nx * 2.45f + 32.0f, nz * 2.45f - 8.0f, seed + profile * 503 + 7) - 0.5f) * 2.0f;
     const float pits = fractalNoise(nx * 3.0f - 11.0f, nz * 3.0f + 19.0f, seed + profile * 503 + 31);
@@ -513,7 +607,7 @@ int faceTerrainHeight(int u, int v, int face, int seed) {
     return std::clamp(height, 2, FaceRelief);
 }
 
-Block cubeFaceMaterial(int depth, int height, int u, int v, int face, int seed) {
+Block cubeFaceMaterial(int depth, int height, int u, int v, int face, int seed, WorldTheme theme) {
     const int profile = faceProfile(face);
     const float vein = fractalNoise((u + depth * 3) / 7.0f, (v - depth * 2) / 7.0f, seed + profile * 503 + 99);
     const float resourceA = fractalNoise((u + profile * 19) / 5.5f, (v + depth * 2) / 5.5f, seed + profile * 701 + 211);
@@ -529,6 +623,21 @@ Block cubeFaceMaterial(int depth, int height, int u, int v, int face, int seed) 
         const float fleck = hash2(u + depth * 13, v - depth * 7, seed + profile * 997);
         if (resourceB > 0.845f && fleck > 0.68f) return Block::Plutonium;
         if (resourceA > 0.855f && fleck > 0.72f) return Block::Fuel;
+    }
+    if (theme == WorldTheme::Desert) {
+        const float strata = fractalNoise((u + depth) / 9.0f, (v - depth) / 9.0f, seed + profile * 503 + 1601);
+        if (depth == 0) {
+            if (height > FaceRelief - 12 && strata > 0.46f) return Block::DesertRock;
+            return Block::Sand;
+        }
+        if (depth < 5) return strata > 0.64f ? Block::Sandstone : Block::Sand;
+        return vein > 0.76f ? Block::DesertRock : Block::Sandstone;
+    }
+    if (theme == WorldTheme::Lush) {
+        const float loam = fractalNoise((u + depth * 2) / 8.0f, (v - depth) / 8.0f, seed + profile * 503 + 2601);
+        if (depth == 0) return Block::Grass;
+        if (depth < 5) return Block::Dirt;
+        return loam > 0.72f ? Block::PaleStone : Block::Dirt;
     }
     if (depth == 0) {
         if (height < 10) return hash2(u, v, seed + profile * 17 + 91) > 0.68f ? Block::ObsidianGlass : Block::Ash;
@@ -548,44 +657,123 @@ void setCubeFaceColumn(World& world, int face, int u, int v, int height) {
             {
                 const int surface = highSurface;
                 for (int y = surface + 1; y < WorldHeight; ++y) world.set(u, y, v, Block::Air);
-                for (int y = std::max(0, surface - shell); y <= surface; ++y) world.set(u, y, v, cubeFaceMaterial(surface - y, height, u, v, face, world.seed));
+                for (int y = std::max(0, surface - shell); y <= surface; ++y) world.set(u, y, v, cubeFaceMaterial(surface - y, height, u, v, face, world.seed, world.theme));
             }
             break;
         case 1:
             {
                 const int surface = lowSurface;
                 for (int y = 0; y < surface; ++y) world.set(u, y, v, Block::Air);
-                for (int y = surface; y <= std::min(WorldHeight - 1, surface + shell); ++y) world.set(u, y, v, cubeFaceMaterial(y - surface, height, u, v, face, world.seed));
+                for (int y = surface; y <= std::min(WorldHeight - 1, surface + shell); ++y) world.set(u, y, v, cubeFaceMaterial(y - surface, height, u, v, face, world.seed, world.theme));
             }
             break;
         case 2:
             {
                 const int surface = highSurface;
                 for (int x = surface + 1; x < WorldSize; ++x) world.set(x, u, v, Block::Air);
-                for (int x = std::max(0, surface - shell); x <= surface; ++x) world.set(x, u, v, cubeFaceMaterial(surface - x, height, u, v, face, world.seed));
+                for (int x = std::max(0, surface - shell); x <= surface; ++x) world.set(x, u, v, cubeFaceMaterial(surface - x, height, u, v, face, world.seed, world.theme));
             }
             break;
         case 3:
             {
                 const int surface = lowSurface;
                 for (int x = 0; x < surface; ++x) world.set(x, u, v, Block::Air);
-                for (int x = surface; x <= std::min(WorldSize - 1, surface + shell); ++x) world.set(x, u, v, cubeFaceMaterial(x - surface, height, u, v, face, world.seed));
+                for (int x = surface; x <= std::min(WorldSize - 1, surface + shell); ++x) world.set(x, u, v, cubeFaceMaterial(x - surface, height, u, v, face, world.seed, world.theme));
             }
             break;
         case 4:
             {
                 const int surface = highSurface;
                 for (int z = surface + 1; z < WorldSize; ++z) world.set(u, v, z, Block::Air);
-                for (int z = std::max(0, surface - shell); z <= surface; ++z) world.set(u, v, z, cubeFaceMaterial(surface - z, height, u, v, face, world.seed));
+                for (int z = std::max(0, surface - shell); z <= surface; ++z) world.set(u, v, z, cubeFaceMaterial(surface - z, height, u, v, face, world.seed, world.theme));
             }
             break;
         case 5:
             {
                 const int surface = lowSurface;
                 for (int z = 0; z < surface; ++z) world.set(u, v, z, Block::Air);
-                for (int z = surface; z <= std::min(WorldSize - 1, surface + shell); ++z) world.set(u, v, z, cubeFaceMaterial(z - surface, height, u, v, face, world.seed));
+                for (int z = surface; z <= std::min(WorldSize - 1, surface + shell); ++z) world.set(u, v, z, cubeFaceMaterial(z - surface, height, u, v, face, world.seed, world.theme));
             }
             break;
+    }
+}
+
+Cell addCell(Cell a, Cell b, int scale = 1) {
+    return {a.x + b.x * scale, a.y + b.y * scale, a.z + b.z * scale};
+}
+
+bool faceBasis(int face, Cell& normal, Cell& tangentU, Cell& tangentV) {
+    switch (face) {
+        case 0: normal = {0, 1, 0}; tangentU = {1, 0, 0}; tangentV = {0, 0, 1}; return true;
+        case 1: normal = {0, -1, 0}; tangentU = {1, 0, 0}; tangentV = {0, 0, 1}; return true;
+        case 2: normal = {1, 0, 0}; tangentU = {0, 1, 0}; tangentV = {0, 0, 1}; return true;
+        case 3: normal = {-1, 0, 0}; tangentU = {0, 1, 0}; tangentV = {0, 0, 1}; return true;
+        case 4: normal = {0, 0, 1}; tangentU = {1, 0, 0}; tangentV = {0, 1, 0}; return true;
+        case 5: normal = {0, 0, -1}; tangentU = {1, 0, 0}; tangentV = {0, 1, 0}; return true;
+    }
+    return false;
+}
+
+bool faceSurface(const World& world, int face, int u, int v, Cell& surface, Cell& normal, Cell& tangentU, Cell& tangentV) {
+    if (!faceBasis(face, normal, tangentU, tangentV)) return false;
+    switch (face) {
+        case 0:
+            for (int y = WorldHeight - 1; y >= 0; --y) if (solid(world.get(u, y, v))) { surface = {u, y, v}; return true; }
+            break;
+        case 1:
+            for (int y = 0; y < WorldHeight; ++y) if (solid(world.get(u, y, v))) { surface = {u, y, v}; return true; }
+            break;
+        case 2:
+            for (int x = WorldSize - 1; x >= 0; --x) if (solid(world.get(x, u, v))) { surface = {x, u, v}; return true; }
+            break;
+        case 3:
+            for (int x = 0; x < WorldSize; ++x) if (solid(world.get(x, u, v))) { surface = {x, u, v}; return true; }
+            break;
+        case 4:
+            for (int z = WorldSize - 1; z >= 0; --z) if (solid(world.get(u, v, z))) { surface = {u, v, z}; return true; }
+            break;
+        case 5:
+            for (int z = 0; z < WorldSize; ++z) if (solid(world.get(u, v, z))) { surface = {u, v, z}; return true; }
+            break;
+    }
+    return false;
+}
+
+void setCell(World& world, Cell cell, Block block) {
+    if (world.inBounds(cell.x, cell.y, cell.z)) world.set(cell.x, cell.y, cell.z, block);
+}
+
+void addLushTree(World& world, int face, int u, int v) {
+    Cell surface{}, normal{}, tangentU{}, tangentV{};
+    if (!faceSurface(world, face, u, v, surface, normal, tangentU, tangentV)) return;
+    const int trunkHeight = 3 + static_cast<int>(hash2(u, v, world.seed + face * 97 + 3301) * 2.0f);
+    for (int i = 1; i <= trunkHeight; ++i) {
+        setCell(world, addCell(surface, normal, i), Block::Wood);
+    }
+    const Cell crown = addCell(surface, normal, trunkHeight + 1);
+    for (int dn = -1; dn <= 1; ++dn) {
+        const int spread = dn == 1 ? 1 : 2;
+        for (int dv = -spread; dv <= spread; ++dv) {
+            for (int du = -spread; du <= spread; ++du) {
+                if (std::abs(du) + std::abs(dv) + std::max(0, dn) > 3) continue;
+                Cell leaf = addCell(addCell(addCell(crown, normal, dn), tangentU, du), tangentV, dv);
+                if (world.inBounds(leaf.x, leaf.y, leaf.z) && world.get(leaf.x, leaf.y, leaf.z) == Block::Air) {
+                    world.set(leaf.x, leaf.y, leaf.z, Block::Leaves);
+                }
+            }
+        }
+    }
+}
+
+void addLushFeatures(World& world) {
+    constexpr std::array<int, 6> faces{{0, 1, 2, 3, 4, 5}};
+    for (int face : faces) {
+        for (int v = 8; v < WorldSize - 8; v += 11) {
+            for (int u = 8; u < WorldSize - 8; u += 11) {
+                const float grove = hash2(u + face * 43, v - face * 29, world.seed + 3203);
+                if (grove > 0.42f) addLushTree(world, face, u, v);
+            }
+        }
     }
 }
 
@@ -596,9 +784,15 @@ void generateWorld(World& world) {
     for (int face : faceOrder) {
         for (int v = 0; v < WorldSize; ++v) {
             for (int u = 0; u < WorldSize; ++u) {
-                setCubeFaceColumn(world, face, u, v, faceTerrainHeight(u, v, face, world.seed));
+                setCubeFaceColumn(world, face, u, v, faceTerrainHeight(u, v, face, world.seed, world.theme));
             }
         }
+    }
+
+    if (world.theme == WorldTheme::Desert) return;
+    if (world.theme == WorldTheme::Lush) {
+        addLushFeatures(world);
+        return;
     }
 
     for (int z = 4; z < WorldSize - 4; ++z) {
@@ -624,7 +818,7 @@ Vec3 spawnPosition(const World& world) {
     for (int z = margin; z < WorldSize - margin; ++z) {
         for (int x = margin; x < WorldSize - margin; ++x) {
             for (int y = WorldHeight - 1; y >= 0; --y) {
-                if (!solid(world.get(x, y, z))) continue;
+                if (!spawnSurface(world.get(x, y, z))) continue;
                 const int dx = x - WorldSize / 2;
                 const int dz = z - WorldSize / 2;
                 const int centerDistance = dx * dx + dz * dz;
@@ -651,7 +845,7 @@ Vec3 spawnPositionOppositeFace(const World& world) {
     for (int z = margin; z < WorldSize - margin; ++z) {
         for (int x = margin; x < WorldSize - margin; ++x) {
             for (int y = 0; y < WorldHeight; ++y) {
-                if (!solid(world.get(x, y, z))) continue;
+                if (!spawnSurface(world.get(x, y, z))) continue;
                 const int dx = x - WorldSize / 2;
                 const int dz = z - WorldSize / 2;
                 const int centerDistance = dx * dx + dz * dz;
@@ -2187,6 +2381,36 @@ void main() {
         float vein = cracks(p * 0.95);
         base = mix(vec3(0.36, 0.48, 0.00), vec3(1.0, 1.0, 0.00), grit);
         base += vec3(0.95, 1.0, 0.06) * vein * 0.72;
+    } else if (kind == 12.0) {
+        float ripple = smoothstep(0.46, 0.80, fbm(vec3(p.x * 0.55, p.y * 0.16, p.z * 2.9)));
+        float grains = fbm(p * 10.0);
+        base = mix(vec3(0.42, 0.34, 0.20), vec3(0.86, 0.72, 0.43), ripple);
+        base *= mix(0.82, 1.14, grains);
+    } else if (kind == 13.0) {
+        float strata = smoothstep(0.12, 0.16, abs(fract(p.y * 0.55 + fbm(p * 0.35) * 0.35) - 0.5));
+        float weather = fbm(p * 4.0);
+        base = mix(vec3(0.34, 0.25, 0.14), vec3(0.68, 0.52, 0.30), weather);
+        base *= mix(0.72, 1.10, strata);
+    } else if (kind == 14.0) {
+        float rough = fbm(p * 5.2);
+        float crack = cracks(p * 0.9);
+        base = mix(vec3(0.17, 0.125, 0.085), vec3(0.44, 0.32, 0.19), rough);
+        base *= 1.0 - crack * 0.46;
+    } else if (kind == 15.0) {
+        float blades = fbm(vec3(p.x * 6.0, p.y * 1.2, p.z * 6.0));
+        base = mix(vec3(0.035, 0.20, 0.050), vec3(0.20, 0.62, 0.12), blades);
+    } else if (kind == 16.0) {
+        float loam = fbm(p * 5.0);
+        float root = cracks(p * 0.72);
+        base = mix(vec3(0.16, 0.095, 0.045), vec3(0.34, 0.22, 0.11), loam);
+        base *= 1.0 - root * 0.28;
+    } else if (kind == 17.0) {
+        float rings = smoothstep(0.18, 0.72, fbm(vec3(p.x * 2.0, p.y * 8.0, p.z * 2.0)));
+        base = mix(vec3(0.20, 0.10, 0.040), vec3(0.48, 0.27, 0.10), rings);
+    } else if (kind == 18.0) {
+        float leaf = fbm(p * 6.5);
+        base = mix(vec3(0.030, 0.22, 0.035), vec3(0.16, 0.58, 0.11), leaf);
+        alpha = 1.0;
     }
 
     float grey = dot(base, vec3(0.299, 0.587, 0.114));
@@ -2259,6 +2483,7 @@ void main() {
     vec3 color = base * light + grid * 0.030;
     if (kind == 10.0) color = mix(color, vec3(0.00, 0.92, 1.0), 0.72) + vec3(0.00, 0.45, 0.70) * grid;
     if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.68) + vec3(0.50, 0.55, 0.00) * grid;
+    if (kind >= 12.0 && kind <= 14.0) color = mix(color, base * 1.22, 0.38);
     float dist = length(uCamera - vWorldPos);
     color *= 1.0 - smoothstep(70.0, 145.0, dist) * 0.35;
     FragColor = vec4(color, 1.0);
@@ -2318,6 +2543,7 @@ const char* skyFragmentShader = R"GLSL(
 #version 330 core
 in vec2 vUV;
 uniform float uTime;
+uniform int uTheme;
 out vec4 FragColor;
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -2340,6 +2566,42 @@ float fbm(vec2 p) {
 }
 void main() {
     vec2 uv = vUV;
+    if (uTheme == 2) {
+        float slow = uTime * 0.012;
+        float cloud = fbm(uv * vec2(6.0, 3.0) + vec2(slow, 0.0));
+        float haze = 1.0 - smoothstep(0.04, 0.62, uv.y);
+        vec3 horizon = vec3(0.58, 0.76, 0.52);
+        vec3 zenith = vec3(0.18, 0.34, 0.52);
+        vec3 color = mix(horizon, zenith, smoothstep(0.0, 1.0, uv.y));
+        color = mix(color, vec3(0.76, 0.86, 0.72), haze * 0.22);
+        color += vec3(0.50, 0.58, 0.50) * smoothstep(0.60, 0.86, cloud) * smoothstep(0.25, 0.95, uv.y) * 0.20;
+        vec2 sunPos = vec2(0.68, 0.20);
+        float sunDist = distance(uv, sunPos);
+        float glow = pow(max(0.0, 0.34 - sunDist), 2.0);
+        color += vec3(0.88, 0.72, 0.36) * glow * 2.5;
+        FragColor = vec4(color, 1.0);
+        return;
+    }
+    if (uTheme == 1) {
+        float slow = uTime * 0.010;
+        float dust = fbm(uv * vec2(8.0, 3.2) + vec2(slow, slow * 0.35));
+        float highDust = fbm(uv * vec2(18.0, 6.0) + vec2(-slow * 2.4, slow));
+        float horizonBand = 1.0 - smoothstep(0.03, 0.55, uv.y);
+        vec3 zenith = vec3(0.18, 0.13, 0.095);
+        vec3 hotSky = vec3(0.82, 0.47, 0.18);
+        vec3 dustColor = vec3(0.58, 0.39, 0.20);
+        vec3 color = mix(hotSky, zenith, smoothstep(0.0, 1.0, uv.y));
+        color = mix(color, dustColor, horizonBand * (0.35 + dust * 0.40));
+        vec2 sunPos = vec2(0.70, 0.18);
+        float sunDist = distance(uv, sunPos);
+        float glare = pow(max(0.0, 0.44 - sunDist), 2.0);
+        float disk = 1.0 - smoothstep(0.115, 0.135, sunDist);
+        color += vec3(1.0, 0.67, 0.24) * glare * 3.0;
+        color = mix(color, vec3(1.0, 0.78, 0.34), disk * 0.72);
+        color += vec3(0.24, 0.13, 0.06) * smoothstep(0.48, 0.90, highDust) * horizonBand;
+        FragColor = vec4(color, 1.0);
+        return;
+    }
     float slow = uTime * 0.018;
     float smoke = fbm(uv * vec2(5.5, 2.6) + vec2(slow, -slow * 0.7));
     float highSmoke = fbm(uv * vec2(13.0, 7.0) + vec2(-slow * 2.0, slow * 0.8));
@@ -2525,6 +2787,7 @@ int main() {
     const MissileFeedUniforms missileFeedUniform = missileFeedUniforms(missileFeedProgram);
     const ForcefieldUniforms forcefieldUniform = forcefieldUniforms(forcefieldProgram);
     const GLint skyTimeUniform = glGetUniformLocation(skyProgram, "uTime");
+    const GLint skyThemeUniform = glGetUniformLocation(skyProgram, "uTheme");
     GLuint emptyVao = 0;
     glGenVertexArrays(1, &emptyVao);
     GLuint lineVbo = 0;
@@ -2586,6 +2849,21 @@ int main() {
         }
         if (keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
         if (keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
+        if (keyPressed(GLFW_KEY_T)) {
+            world.theme = nextTheme(world.theme);
+            world.seed += 7331;
+            generateWorld(world);
+            rebuildMeshes(world, opaque, transparentMesh);
+            forcefieldY = forcefieldPlaneY(world);
+            rebuildForcefieldMesh(world, forcefieldMesh);
+            respawnPlayer(world, player);
+            respawnPlayer(world, playerTwo, true);
+            rocket.active = false;
+            rocketTwo.active = false;
+            blast.active = false;
+            blastTwo.active = false;
+            satelliteFeedDirty = true;
+        }
         if (keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode);
         if (keyPressed(GLFW_KEY_P)) playerTwoToolMode = nextToolMode(playerTwoToolMode);
         if (keyPressed(GLFW_KEY_MINUS)) {
@@ -2734,7 +3012,7 @@ int main() {
                 if (buildCooldown <= 0.0f && world.get(x, y, z) == Block::Air) {
                     buildingTimer += dt;
                     if (buildingTimer >= buildDuration(selectedBuild)) {
-                        world.set(x, y, z, blockForBuildType(selectedBuild));
+                        world.set(x, y, z, blockForBuildType(selectedBuild, world.theme));
                         if (playerCollides(world, player.position)) world.set(x, y, z, Block::Air);
                         rebuildMeshes(world, opaque, transparentMesh);
                         satelliteFeedDirty = true;
@@ -2767,6 +3045,7 @@ int main() {
                 glDisable(GL_DEPTH_TEST);
                 glUseProgram(skyProgram);
                 glUniform1f(skyTimeUniform, static_cast<float>(now));
+                glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
                 glBindVertexArray(emptyVao);
                 glDrawArrays(GL_TRIANGLES, 0, 3);
                 glEnable(GL_DEPTH_TEST);
@@ -2821,6 +3100,7 @@ int main() {
         glDisable(GL_DEPTH_TEST);
         glUseProgram(skyProgram);
         glUniform1f(skyTimeUniform, static_cast<float>(now));
+        glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
         glBindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glEnable(GL_DEPTH_TEST);
@@ -2875,6 +3155,7 @@ int main() {
         glDisable(GL_DEPTH_TEST);
         glUseProgram(skyProgram);
         glUniform1f(skyTimeUniform, static_cast<float>(now));
+        glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
         glBindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glEnable(GL_DEPTH_TEST);
@@ -2907,7 +3188,7 @@ int main() {
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
-        const std::string title = "Dead Cube World - " + std::to_string(opaque.count / 6) + " bleak faces - build: "
+        const std::string title = "Dead Cube World - " + std::string(themeName(world.theme)) + " - " + std::to_string(opaque.count / 6) + " faces - build: "
             + buildTypeName(selectedBuild) + " - sat: " + orbitName(satelliteOrbit)
             + " height " + std::to_string(static_cast<int>(targetSatelliteOrbitHeight))
             + " - P1 " + std::to_string(player.health) + "hp F" + std::to_string(player.fuel) + "/P" + std::to_string(player.plutonium)

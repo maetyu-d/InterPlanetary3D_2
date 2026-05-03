@@ -31,6 +31,7 @@ The game runs in local two-player split-screen. Player 1 starts on the top face;
 - Mine fuel/plutonium or blast resource pockets to collect resources
 - `O` to cycle the satellite between current-face, opposite-face, and polar orbits
 - `-` and `=` to lower/raise the satellite orbit
+- `T` to cycle dead, desert, and lush green worlds
 - `R` to regenerate the world
 - `F1` to release/capture the mouse
 - `Esc` to quit
