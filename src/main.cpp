@@ -202,6 +202,7 @@ enum class SatelliteOrbit {
 
 enum class ToolMode {
     MineBuild,
+    Shotgun,
     Missile,
     AtomicMissile
 };
@@ -358,6 +359,8 @@ struct Player {
     int plutonium = 3;
     int score = 0;
     float rocketCooldown = 0.0f;
+    float shotgunCooldown = 0.0f;
+    float shotgunFlashTimer = 0.0f;
     float hurtTimer = 0.0f;
 };
 
@@ -576,7 +579,8 @@ SatelliteOrbit nextOrbit(SatelliteOrbit orbit) {
 
 ToolMode nextToolMode(ToolMode mode) {
     switch (mode) {
-        case ToolMode::MineBuild: return ToolMode::Missile;
+        case ToolMode::MineBuild: return ToolMode::Shotgun;
+        case ToolMode::Shotgun: return ToolMode::Missile;
         case ToolMode::Missile: return ToolMode::AtomicMissile;
         case ToolMode::AtomicMissile: return ToolMode::MineBuild;
     }
@@ -586,6 +590,7 @@ ToolMode nextToolMode(ToolMode mode) {
 const char* toolModeName(ToolMode mode) {
     switch (mode) {
         case ToolMode::MineBuild: return "mine/build";
+        case ToolMode::Shotgun: return "shotgun";
         case ToolMode::Missile: return "missile";
         case ToolMode::AtomicMissile: return "atomic";
     }
@@ -1733,6 +1738,48 @@ bool applyToolDamage(const World& world, Player& target, bool targetOppositeFace
     return false;
 }
 
+bool rayHitsPlayer(Vec3 origin, Vec3 direction, const Player& target, float maxDistance);
+bool raycastBlock(const World& world, Vec3 origin, Vec3 direction, float maxDistance, Vec3& hit, Vec3& previous);
+
+bool fireShotgun(World& world, Player& target, bool targetOppositeFace, Player& attacker, Vec3 origin, Vec3 direction, Vec3 upHint, float time, int owner) {
+    Vec3 right = normalize(cross(direction, upHint));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    Vec3 up = normalize(cross(right, direction));
+    int hits = 0;
+    bool blocksChanged = false;
+    constexpr int PelletCount = 11;
+    constexpr float Range = 8.5f;
+    for (int i = 0; i < PelletCount; ++i) {
+        const float lane = static_cast<float>(i);
+        Vec3 pelletDir = direction;
+        if (i > 0) {
+            const float a = std::sin(time * 43.0f + lane * 12.9898f + owner * 7.17f);
+            const float b = std::cos(time * 37.0f + lane * 78.233f + owner * 3.41f);
+            const float spread = 0.045f + 0.012f * std::sin(lane * 2.7f);
+            pelletDir = normalize(direction + right * (a * spread) + up * (b * spread));
+        }
+        Vec3 blockHit{};
+        Vec3 previous{};
+        const bool blocked = raycastBlock(world, origin, pelletDir, Range, blockHit, previous);
+        float range = Range;
+        if (blocked) {
+            range = std::max(0.0f, length((blockHit + Vec3{0.5f, 0.5f, 0.5f}) - origin) - 0.35f);
+            const int x = static_cast<int>(blockHit.x);
+            const int y = static_cast<int>(blockHit.y);
+            const int z = static_cast<int>(blockHit.z);
+            collectResource(attacker, world.get(x, y, z));
+            world.set(x, y, z, Block::Air);
+            blocksChanged = true;
+        }
+        if (rayHitsPlayer(origin, pelletDir, target, range)) ++hits;
+    }
+    if (hits > 0) {
+        const int damage = std::min(50, 18 + hits * 4);
+        applyToolDamage(world, target, targetOppositeFace, attacker, damage);
+    }
+    return blocksChanged;
+}
+
 bool rayHitsPlayer(Vec3 origin, Vec3 direction, const Player& target, float maxDistance) {
     const Vec3 torso = target.position + Vec3{0.0f, target.upSign * PlayerHeight * 0.55f, 0.0f};
     const Vec3 toTarget = torso - origin;
@@ -2010,8 +2057,8 @@ void addUiTextCentered(std::vector<UiVertex>& vertices, float centerX, float y, 
     addUiText(vertices, centerX - uiTextWidth(size, text) * 0.5f, y, size, text, color);
 }
 
-void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool rocketLauncher, float progress, float time, bool alternatePalette = false) {
-    const float action = (mining || building || rocketLauncher) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
+void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool shotgun, bool rocketLauncher, float progress, float time, bool alternatePalette = false) {
+    const float action = (mining || building || shotgun || rocketLauncher) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
     const float idle = std::sin(time * 1.7f) * 0.006f;
     const float sx = -0.015f - action * 0.030f;
     const float sy = idle + action * 0.030f;
@@ -2035,6 +2082,24 @@ void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool bu
         addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.035f, -0.082f, 0.034f, 0.044f, launcherTip);
         addUiRectRotated(vertices, tail, launcherAngle, 0.080f, 0.020f, 0.052f, 0.086f, {0.11f, 0.115f, 0.105f, 1.0f});
         addUiRectRotated(vertices, tail, launcherAngle, 0.108f, 0.088f, 0.035f, 0.058f, {0.035f, 0.032f, 0.030f, 1.0f});
+    } else if (shotgun) {
+        const Vec2 grip{0.785f + sx, 0.770f + sy};
+        const Vec2 muzzle{0.500f, 0.500f};
+        const Vec2 aim{muzzle.x - grip.x, muzzle.y - grip.y};
+        const float angle = std::atan2(aim.y, aim.x) - action * 0.05f;
+        const float barrelLength = std::sqrt(aim.x * aim.x + aim.y * aim.y) * 0.90f;
+        const std::array<float, 4> barrel = alternatePalette ? std::array<float, 4>{0.10f, 0.22f, 0.42f, 1.0f} : std::array<float, 4>{0.13f, 0.13f, 0.12f, 1.0f};
+        const std::array<float, 4> pump = alternatePalette ? std::array<float, 4>{0.08f, 0.36f, 0.75f, 1.0f} : std::array<float, 4>{0.30f, 0.20f, 0.11f, 1.0f};
+        const std::array<float, 4> stock = alternatePalette ? std::array<float, 4>{0.06f, 0.10f, 0.18f, 1.0f} : std::array<float, 4>{0.22f, 0.12f, 0.07f, 1.0f};
+        addUiRectRotated(vertices, grip, angle, -0.045f, 0.005f, 0.115f, 0.075f, stock);
+        addUiRectRotated(vertices, grip, angle, -0.010f, -0.022f, barrelLength, 0.044f, barrel);
+        addUiRectRotated(vertices, grip, angle, barrelLength - 0.070f, -0.035f, 0.075f, 0.070f, {0.025f, 0.025f, 0.024f, 1.0f});
+        addUiRectRotated(vertices, grip, angle, 0.070f, 0.016f, 0.095f, 0.052f, pump);
+        if (action > 0.12f) {
+            addUiRectRotated(vertices, grip, angle, barrelLength - 0.026f, -0.055f, 0.030f + action * 0.040f, 0.018f, {1.0f, 0.48f, 0.08f, 0.86f});
+            addUiRectRotated(vertices, grip, angle, barrelLength + 0.000f, -0.020f, 0.070f * action, 0.040f * action, {1.0f, 0.82f, 0.18f, 0.72f});
+            addUiRectRotated(vertices, grip, angle, barrelLength + 0.025f, 0.018f, 0.045f * action, 0.026f * action, {1.0f, 0.20f, 0.06f, 0.58f});
+        }
     } else {
         addUiRectRotated(vertices, pivot, swing, -0.018f, -0.015f, 0.036f, 0.250f, {0.32f, 0.21f, 0.11f, 1.0f});
         addUiRectRotated(vertices, pivot, swing, -0.026f, 0.070f, 0.052f, 0.030f, {0.20f, 0.13f, 0.07f, 1.0f});
@@ -2611,6 +2676,48 @@ void drawPlanetCubeWireframe(const LineUniforms& lineUniforms, GLuint lineVao, G
     glLineWidth(1.0f);
 }
 
+void drawRocketFlame(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, const Rocket& rocket, float time) {
+    if (!rocket.active) return;
+
+    Vec3 right = normalize(cross(rocket.direction, rocket.up));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    const Vec3 up = normalize(cross(right, rocket.direction));
+    const Vec3 tail = rocket.position - rocket.direction * 0.58f;
+    const float baseLength = rocket.atomic ? 1.25f : 0.78f;
+    const float baseWidth = rocket.atomic ? 0.34f : 0.22f;
+
+    std::vector<float> data;
+    data.reserve(3 * 48);
+    auto addLine = [&data](Vec3 a, Vec3 b) {
+        data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
+        data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
+    };
+
+    for (int i = 0; i < 12; ++i) {
+        const float lane = static_cast<float>(i);
+        const float wave = std::sin(time * 18.0f + rocket.age * 7.0f + lane * 1.91f);
+        const float twist = std::cos(time * 13.0f + lane * 2.37f);
+        const float spread = (static_cast<float>(i % 4) - 1.5f) / 1.5f;
+        const float lift = (static_cast<float>((i / 4) % 3) - 1.0f);
+        const Vec3 start = tail + right * (spread * baseWidth * 0.30f) + up * (lift * baseWidth * 0.22f);
+        const Vec3 end = tail - rocket.direction * (baseLength * (0.62f + 0.22f * wave))
+            + right * (spread * baseWidth + twist * baseWidth * 0.20f)
+            + up * (lift * baseWidth + wave * baseWidth * 0.18f);
+        addLine(start, end);
+    }
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    if (rocket.atomic) glUniform4f(lineUniforms.color, 0.36f, 0.95f, 1.0f, 0.72f);
+    else glUniform4f(lineUniforms.color, 1.0f, 0.38f, 0.05f, 0.78f);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(rocket.atomic ? 3.0f : 2.4f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
 void drawSatellitePlayerTracker(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 playerPosition, float upSign, std::array<float, 4> color) {
     const Vec3 head = playerPosition + Vec3{0.0f, upSign * (PlayerHeight + 0.35f), 0.0f};
     const Vec3 center = head + Vec3{0.0f, upSign * 0.55f, 0.0f};
@@ -2945,7 +3052,7 @@ void main() {
     float spill = smoothstep(0.58, 0.86, dot(lampRay, normalize(uHeadlampDir))) * 0.22;
     float facing = max(dot(n, -lampRay), 0.0);
     float falloff = 1.0 / (1.0 + lampDistance * lampDistance * 0.030);
-    vec3 headlamp = vec3(0.92, 0.94, 0.86) * (cone * 2.90 + spill * 2.0) * facing * falloff;
+    vec3 headlamp = vec3(0.92, 0.94, 0.86) * (cone * 5.80 + spill * 4.0) * facing * falloff;
     light += headlamp;
     vec3 color = pow(base * light * faceAO, vec3(0.95));
     if (kind == 10.0) color += base * 1.15 + vec3(0.0, 0.35, 0.55) * edge;
@@ -3372,6 +3479,12 @@ int main() {
         player.plutonium = 3;
         playerTwo.fuel = 3;
         playerTwo.plutonium = 3;
+        player.rocketCooldown = 0.0f;
+        playerTwo.rocketCooldown = 0.0f;
+        player.shotgunCooldown = 0.0f;
+        playerTwo.shotgunCooldown = 0.0f;
+        player.shotgunFlashTimer = 0.0f;
+        playerTwo.shotgunFlashTimer = 0.0f;
         match.startedAt = gameNow;
         match.suddenDeath = false;
         match.over = false;
@@ -3566,12 +3679,21 @@ int main() {
         bool hasHit = raycastBlock(world, eye, look, 8.0f, hit, previous);
         const bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         const bool rightDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+        const bool playerPrimaryFireDown = leftDown;
         static bool wasRocketFireDown = false;
+        static bool wasShotgunFireDown = false;
         const bool playerMissileMode = playerToolMode == ToolMode::Missile || playerToolMode == ToolMode::AtomicMissile;
-        const bool rocketFirePressed = p1CanAttack && playerMissileMode && leftDown && !wasRocketFireDown;
-        wasRocketFireDown = p1CanAttack && playerMissileMode && leftDown;
+        const bool playerShotgunMode = playerToolMode == ToolMode::Shotgun;
+        const bool rocketFirePressed = p1CanAttack && playerMissileMode && playerPrimaryFireDown && !wasRocketFireDown;
+        wasRocketFireDown = p1CanAttack && playerMissileMode && playerPrimaryFireDown;
+        const bool shotgunFirePressed = p1CanAttack && playerShotgunMode && playerPrimaryFireDown && !wasShotgunFireDown;
+        wasShotgunFireDown = p1CanAttack && playerShotgunMode && playerPrimaryFireDown;
         player.rocketCooldown = std::max(0.0f, player.rocketCooldown - simDt);
         playerTwo.rocketCooldown = std::max(0.0f, playerTwo.rocketCooldown - simDt);
+        player.shotgunCooldown = std::max(0.0f, player.shotgunCooldown - simDt);
+        playerTwo.shotgunCooldown = std::max(0.0f, playerTwo.shotgunCooldown - simDt);
+        player.shotgunFlashTimer = std::max(0.0f, player.shotgunFlashTimer - simDt);
+        playerTwo.shotgunFlashTimer = std::max(0.0f, playerTwo.shotgunFlashTimer - simDt);
         player.hurtTimer = std::max(0.0f, player.hurtTimer - simDt);
         playerTwo.hurtTimer = std::max(0.0f, playerTwo.hurtTimer - simDt);
         toolHitCooldown = std::max(0.0f, toolHitCooldown - simDt);
@@ -3586,12 +3708,16 @@ int main() {
             satelliteFeedDirty = true;
         }
         static bool wasPlayerTwoFireDown = false;
+        static bool wasPlayerTwoShotgunDown = false;
         const bool playerTwoMissileMode = playerTwoToolMode == ToolMode::Missile || playerTwoToolMode == ToolMode::AtomicMissile;
+        const bool playerTwoShotgunMode = playerTwoToolMode == ToolMode::Shotgun;
         const bool playerTwoFireDown = p2Control == P2Control::Gamepad
             ? (gamepadButtonDown(GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER) || gamepadAxis(GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.45f)
             : glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
         const bool playerTwoFirePressed = p2CanAttack && playerTwoMissileMode && playerTwoFireDown && !wasPlayerTwoFireDown;
         wasPlayerTwoFireDown = p2CanAttack && playerTwoMissileMode && playerTwoFireDown;
+        const bool playerTwoShotgunPressed = p2CanAttack && playerTwoShotgunMode && playerTwoFireDown && !wasPlayerTwoShotgunDown;
+        wasPlayerTwoShotgunDown = p2CanAttack && playerTwoShotgunMode && playerTwoFireDown;
         const Vec3 eyeTwoForFire{playerTwo.position.x, playerTwo.position.y + playerTwo.upSign * PlayerHeight * 0.88f, playerTwo.position.z};
         const Vec3 lookTwoForFire = forwardFromAngles(playerTwo.yaw, playerTwo.pitch);
         const bool playerTwoAtomic = playerTwoToolMode == ToolMode::AtomicMissile;
@@ -3600,6 +3726,24 @@ int main() {
             playerTwo.rocketCooldown = playerTwoAtomic ? 2.4f : 1.25f;
             fireRocket(rocketTwo, 2, playerTwoAtomic, eyeTwoForFire, lookTwoForFire, playerTwo.yaw, playerTwo.pitch);
             satelliteFeedDirty = true;
+        }
+        if (shotgunFirePressed && player.shotgunCooldown <= 0.0f) {
+            const bool shotgunBrokeBlocks = fireShotgun(world, playerTwo, true, player, eye, look, {0.0f, player.upSign, 0.0f}, renderTime, 1);
+            if (shotgunBrokeBlocks) {
+                rebuildMeshes(world, opaque, transparentMesh);
+                satelliteFeedDirty = true;
+            }
+            player.shotgunCooldown = 3.90f;
+            player.shotgunFlashTimer = 0.18f;
+        }
+        if (playerTwoShotgunPressed && playerTwo.shotgunCooldown <= 0.0f) {
+            const bool shotgunBrokeBlocks = fireShotgun(world, player, false, playerTwo, eyeTwoForFire, lookTwoForFire, {0.0f, playerTwo.upSign, 0.0f}, renderTime, 2);
+            if (shotgunBrokeBlocks) {
+                rebuildMeshes(world, opaque, transparentMesh);
+                satelliteFeedDirty = true;
+            }
+            playerTwo.shotgunCooldown = 3.90f;
+            playerTwo.shotgunFlashTimer = 0.18f;
         }
         const bool rocketWasActive = rocket.active;
         updateRocket(world, rocket, blast, simDt, rocket.active && rocket.age >= 1.0f);
@@ -3629,14 +3773,15 @@ int main() {
         }
         updateBlast(blast, simDt);
         updateBlast(blastTwo, simDt);
-        const bool rocketBlocksTools = playerMissileMode || rocket.active;
+        const bool rocketBlocksTools = playerMissileMode || playerShotgunMode || rocket.active;
+        const bool p2MineBuildMode = playerTwoToolMode == ToolMode::MineBuild;
 
         buildCooldown = std::max(0.0f, buildCooldown - simDt);
         if (p1CanAttack && !rocketBlocksTools && mouseCaptured && (leftDown || rightDown) && toolHitCooldown <= 0.0f && rayHitsPlayer(eye, look, playerTwo, 4.0f)) {
             applyToolDamage(world, playerTwo, true, player, rightDown ? 18 : 12);
             toolHitCooldown = 0.42f;
         }
-        const bool playerTwoToolSwing = playerTwoToolMode == ToolMode::MineBuild && playerTwoFireDown;
+        const bool playerTwoToolSwing = p2MineBuildMode && playerTwoFireDown;
         if (p2CanAttack && playerTwoToolSwing && toolHitCooldownTwo <= 0.0f && rayHitsPlayer(eyeTwoForFire, lookTwoForFire, player, 4.0f)) {
             applyToolDamage(world, player, false, playerTwo, 12);
             toolHitCooldownTwo = 0.42f;
@@ -3800,6 +3945,8 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight);
+        drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocket, renderTime);
+        drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocketTwo, renderTime);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blastTwo);
         glDisable(GL_BLEND);
@@ -3828,10 +3975,11 @@ int main() {
         else drawSatelliteFeed(textureUniform, satelliteCamera.color, leftWidth, height, renderTime);
         if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, leftWidth, height, renderTime);
         else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, leftWidth, height);
-        if (playerMissileMode || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, renderTime);
+        if (playerMissileMode || playerShotgunMode || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, renderTime);
         else drawSmallReticle(uiProgram, uiVao, uiVbo);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
-        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerMissileMode, interactionProgress, renderTime);
+        const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
+        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
@@ -3855,6 +4003,8 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, renderTime + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
+        drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocket, renderTime);
+        drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocketTwo, renderTime);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blastTwo);
         glDisable(GL_BLEND);
@@ -3866,9 +4016,11 @@ int main() {
         glBindVertexArray(emptyVao);
         drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, rightWidth, height, renderTime);
         drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, rightWidth, height);
-        drawSmallReticle(uiProgram, uiVao, uiVbo, true);
+        if (playerTwoMissileMode || playerTwoShotgunMode || rocketTwo.active) drawReticle(uiProgram, uiVao, uiVbo, rocketTwo.active && rocketTwo.age >= 1.0f, renderTime);
+        else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
-        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoMissileMode, 0.0f, renderTime, true);
+        const float shotgunProgressTwo = std::clamp(playerTwo.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
+        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, true);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
