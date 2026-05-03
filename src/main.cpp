@@ -217,7 +217,8 @@ enum class WeaponMode {
 enum class GameType {
     FirstToThree,
     PhasedTurns,
-    AlternatingHunter
+    AlternatingHunter,
+    SingleScreenHunter
 };
 
 enum class P2Control {
@@ -657,7 +658,8 @@ GameType nextGameType(GameType type) {
     switch (type) {
         case GameType::FirstToThree: return GameType::PhasedTurns;
         case GameType::PhasedTurns: return GameType::AlternatingHunter;
-        case GameType::AlternatingHunter: return GameType::FirstToThree;
+        case GameType::AlternatingHunter: return GameType::SingleScreenHunter;
+        case GameType::SingleScreenHunter: return GameType::FirstToThree;
     }
     return GameType::FirstToThree;
 }
@@ -667,21 +669,27 @@ const char* gameTypeName(GameType type) {
         case GameType::FirstToThree: return "first to 3";
         case GameType::PhasedTurns: return "10-turn phases";
         case GameType::AlternatingHunter: return "alternating hunter";
+        case GameType::SingleScreenHunter: return "single screen hunter";
     }
     return "first to 3";
 }
 
 GameType previousGameType(GameType type) {
     switch (type) {
-        case GameType::FirstToThree: return GameType::AlternatingHunter;
+        case GameType::FirstToThree: return GameType::SingleScreenHunter;
         case GameType::PhasedTurns: return GameType::FirstToThree;
         case GameType::AlternatingHunter: return GameType::PhasedTurns;
+        case GameType::SingleScreenHunter: return GameType::AlternatingHunter;
     }
     return GameType::FirstToThree;
 }
 
 const char* p2ControlName(P2Control control) {
     return control == P2Control::Keyboard ? "keys" : "gamepad";
+}
+
+bool isAlternatingHunterMode(GameType type) {
+    return type == GameType::AlternatingHunter || type == GameType::SingleScreenHunter;
 }
 
 const char* turnPhaseName(const MatchState& match, double now) {
@@ -691,7 +699,7 @@ const char* turnPhaseName(const MatchState& match, double now) {
         const int turn = std::clamp(static_cast<int>((now - match.startedAt) / 60.0), 0, 9);
         return (turn % 2) == 0 ? "build/mine" : "attack/hide";
     }
-    if (match.type == GameType::AlternatingHunter) {
+    if (isAlternatingHunterMode(match.type)) {
         const int turn = std::max(0, static_cast<int>((now - match.startedAt) / 60.0));
         const int active = (turn % 2) == 0 ? match.firstHunter : 3 - match.firstHunter;
         return active == 1 ? "P1 hunts" : "P2 hunts";
@@ -2292,6 +2300,7 @@ void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme th
     std::string mode = "FIRST TO 3";
     if (gameType == GameType::PhasedTurns) mode = "10 TURNS";
     if (gameType == GameType::AlternatingHunter) mode = "HUNTER";
+    if (gameType == GameType::SingleScreenHunter) mode = "1 SCREEN";
     std::string world = "DEAD";
     if (theme == WorldTheme::Desert) world = "DESERT";
     if (theme == WorldTheme::Lush) world = "LUSH";
@@ -2315,12 +2324,13 @@ void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme th
     glBindVertexArray(0);
 }
 
-void drawMatchHud(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const MatchState& match, const Player& player, const Player& playerTwo, double now, int secondsRemaining) {
+void drawMatchHud(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const MatchState& match, const Player& player, const Player& playerTwo, double now, int secondsRemaining, bool singleScreen = false) {
     std::vector<UiVertex> vertices;
     vertices.reserve(2800);
     std::string mode = "FIRST 3";
     if (match.type == GameType::PhasedTurns) mode = "10 TURNS";
     if (match.type == GameType::AlternatingHunter) mode = "HUNTER";
+    if (match.type == GameType::SingleScreenHunter) mode = "1 SCREEN";
 
     std::string phase = turnPhaseName(match, now);
     std::transform(phase.begin(), phase.end(), phase.begin(), [](unsigned char c) {
@@ -2343,7 +2353,7 @@ void drawMatchHud(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const MatchState
         addUiText(vertices, x + 0.010f, 0.911f, 0.00215f, text, {0.78f, 1.0f, 0.84f, 0.92f});
     };
     addHud(0.0f, std::to_string(player.score) + "-" + std::to_string(playerTwo.score), {1.0f, 0.30f, 0.08f, 0.48f});
-    addHud(0.5f, std::to_string(playerTwo.score) + "-" + std::to_string(player.score), {0.15f, 0.55f, 1.0f, 0.48f});
+    if (!singleScreen) addHud(0.5f, std::to_string(playerTwo.score) + "-" + std::to_string(player.score), {0.15f, 0.55f, 1.0f, 0.48f});
 
     glUseProgram(uiProgram);
     glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
@@ -2400,6 +2410,7 @@ void drawMatchEndScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Matc
     std::string mode = "FIRST TO 3";
     if (match.type == GameType::PhasedTurns) mode = "10 TURNS";
     if (match.type == GameType::AlternatingHunter) mode = "HUNTER";
+    if (match.type == GameType::SingleScreenHunter) mode = "1 SCREEN";
     const std::string winner = match.winner == 1 ? "PLAYER 1 WINS" : "PLAYER 2 WINS";
     const std::string score = std::to_string(player.score) + " - " + std::to_string(playerTwo.score);
     const bool rematchSelected = choice == MatchEndChoice::Rematch;
@@ -3777,15 +3788,15 @@ int main() {
         }
 
         int activeHunter = 0;
-        if (match.type == GameType::AlternatingHunter) {
+        if (isAlternatingHunterMode(match.type)) {
             const int turn = std::max(0, static_cast<int>(matchElapsed / 60.0));
             activeHunter = (turn % 2) == 0 ? match.firstHunter : 3 - match.firstHunter;
         }
         const bool phasedBuildTurn = match.type == GameType::PhasedTurns && !match.suddenDeath && !match.over
             && (std::clamp(static_cast<int>(matchElapsed / 60.0), 0, 9) % 2) == 0;
         const bool phasedAttackTurn = match.type == GameType::PhasedTurns && !match.suddenDeath && !match.over && !phasedBuildTurn;
-        const bool p1CanAct = !gamePaused && !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 1);
-        const bool p2CanAct = !gamePaused && !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 2);
+        const bool p1CanAct = !gamePaused && !match.over && (!isAlternatingHunterMode(match.type) || activeHunter == 1);
+        const bool p2CanAct = !gamePaused && !match.over && (!isAlternatingHunterMode(match.type) || activeHunter == 2);
         const bool p1CanMove = p1CanAct;
         const bool p2CanMove = p2CanAct;
         const bool p1CanMineBuild = p1CanAct && (match.type != GameType::PhasedTurns || match.suddenDeath || phasedBuildTurn);
@@ -3972,7 +3983,7 @@ int main() {
                     match.over = true;
                     match.winner = player.score > scoreBeforeCombatOne ? 1 : 2;
                 }
-            } else if (match.type == GameType::AlternatingHunter) {
+            } else if (isAlternatingHunterMode(match.type)) {
                 match.over = true;
                 match.winner = player.score > scoreBeforeCombatOne ? 1 : 2;
             }
@@ -4061,11 +4072,84 @@ int main() {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             lastSatelliteFeedTimeTwo = gameTime;
         }
+        const bool singleScreenMode = match.type == GameType::SingleScreenHunter;
         const int leftWidth = std::max(1, width / 2);
         const int rightWidth = std::max(1, width - leftWidth);
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        if (singleScreenMode) {
+            const bool watchingPlayerTwo = activeHunter == 2;
+            const Vec3 activeEye = watchingPlayerTwo ? eyeTwoForFire : eye;
+            const Vec3 activeLook = watchingPlayerTwo ? lookTwoForFire : look;
+            const float activeUpSign = watchingPlayerTwo ? playerTwo.upSign : player.upSign;
+            const Mat4 projSingle = perspective(68.0f * Pi / 180.0f, static_cast<float>(width) / static_cast<float>(height), 0.05f, 140.0f);
+            const Mat4 viewSingle = lookAt(activeEye, activeEye + activeLook, {0.0f, activeUpSign, 0.0f});
+            const Mat4 vpSingle = multiply(projSingle, viewSingle);
+            const Rocket& visibleRocket = rocket.active ? rocket : rocketTwo;
+
+            glViewport(0, 0, width, height);
+            glDisable(GL_DEPTH_TEST);
+            glUseProgram(skyProgram);
+            glUniform1f(skyTimeUniform, renderTime);
+            glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
+            glBindVertexArray(emptyVao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glEnable(GL_DEPTH_TEST);
+
+            drawVoxelScene(voxelUniform, vpSingle, opaque, transparentMesh, watchingPlayerTwo ? &satelliteMesh : &satelliteMesh, watchingPlayerTwo ? satellitePositionTwo : satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, activeEye, activeLook, renderTime);
+            if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vpSingle, renderTime);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpSingle, renderTime, satelliteOrbit, satelliteOrbitHeight, {0.86f, 0.18f, 0.08f, 0.36f});
+            drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpSingle, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight, {0.15f, 0.55f, 1.0f, 0.42f});
+            drawRocketFlame(lineUniform, lineVao, lineVbo, vpSingle, rocket, renderTime);
+            drawRocketFlame(lineUniform, lineVao, lineVbo, vpSingle, rocketTwo, renderTime);
+            drawBlast(lineUniform, lineVao, lineVbo, vpSingle, blast);
+            drawBlast(lineUniform, lineVao, lineVbo, vpSingle, blastTwo);
+            glDisable(GL_BLEND);
+
+            if (!watchingPlayerTwo && p1CanMineBuild && !rocketBlocksTools && hasHit) {
+                float interactionProgress = 0.0f;
+                bool showingBuild = false;
+                if (rightDown && sameBlockCell(buildingTarget, previous)) {
+                    interactionProgress = std::clamp(buildingTimer / buildDuration(selectedBuild), 0.0f, 1.0f);
+                    showingBuild = true;
+                } else if (leftDown && sameBlockCell(miningTarget, hit)) {
+                    const Block targetBlock = world.get(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z));
+                    interactionProgress = std::clamp(miningTimer / mineDuration(targetBlock), 0.0f, 1.0f);
+                }
+                drawSelection(lineUniform, lineVao, lineVbo, vpSingle, hit, previous, interactionProgress, showingBuild, renderTime);
+            }
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBindVertexArray(emptyVao);
+            if (watchingPlayerTwo) {
+                drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, width, height, renderTime);
+                drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, width, height);
+                if (playerTwoMissileMode || playerTwoShotgunMode || rocketTwo.active) drawReticle(uiProgram, uiVao, uiVbo, rocketTwo.active && rocketTwo.age >= 1.0f, renderTime);
+                else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
+                drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
+                const float shotgunProgressTwo = std::clamp(playerTwo.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
+                drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, true);
+            } else {
+                if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, width, height);
+                else drawSatelliteFeed(textureUniform, satelliteCamera.color, width, height, renderTime);
+                if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, width, height, renderTime);
+                else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, width, height);
+                if (playerMissileMode || playerShotgunMode || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, renderTime);
+                else drawSmallReticle(uiProgram, uiVao, uiVbo);
+                drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
+                const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
+                drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, shotgunProgress, renderTime);
+            }
+            glDisable(GL_BLEND);
+            glEnable(GL_CULL_FACE);
+            glEnable(GL_DEPTH_TEST);
+        } else {
         glViewport(0, 0, leftWidth, height);
         glDisable(GL_DEPTH_TEST);
         glUseProgram(skyProgram);
@@ -4164,6 +4248,7 @@ int main() {
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
+        }
 
         int modeSecondsRemaining = 0;
         if (!match.over && !match.suddenDeath) {
@@ -4175,7 +4260,7 @@ int main() {
         glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawMatchHud(uiProgram, uiVao, uiVbo, match, player, playerTwo, gameTime, modeSecondsRemaining);
+        drawMatchHud(uiProgram, uiVao, uiVbo, match, player, playerTwo, gameTime, modeSecondsRemaining, singleScreenMode);
         if (match.over) drawMatchEndScreen(uiProgram, uiVao, uiVbo, match, player, playerTwo, matchEndChoice);
         else if (quitPrompt) drawQuitPrompt(uiProgram, uiVao, uiVbo, quitChoice);
         glDisable(GL_BLEND);
