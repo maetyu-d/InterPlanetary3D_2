@@ -2519,6 +2519,7 @@ void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme th
     const std::array<float, 4> text{0.80f, 1.0f, 0.86f, 0.96f};
     const std::array<float, 4> muted{0.36f, 0.62f, 0.50f, 0.92f};
 
+    addUiRect(vertices, 0.0f, 0.0f, 1.0f, 1.0f, {0.015f, 0.012f, 0.010f, 1.0f});
     addUiRect(vertices, 0.0f, 0.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f, 0.48f});
     addUiTextCentered(vertices, 0.5f, 0.145f, 0.0054f, GameTitleCaps, {0.95f, 1.0f, 0.92f, 0.98f});
     addUiRect(vertices, 0.32f, 0.205f, 0.36f, 0.006f, ember);
@@ -3060,7 +3061,7 @@ void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo,
     const float t = std::clamp(blast.age / lifetime, 0.0f, 1.0f);
     const float radius = (blast.atomic ? 2.0f : 1.2f) + t * (blast.atomic ? 16.0f : 9.0f);
     std::vector<float> data;
-    data.reserve(3 * 1200);
+    data.reserve(3 * 900);
     auto addLine = [&data](Vec3 a, Vec3 b) {
         data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
         data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
@@ -3092,27 +3093,27 @@ void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo,
         const Vec3 capCenter = blast.position + up * stemHeight;
         const float capRadius = 3.0f + rise * 12.0f;
         const float capHeight = 1.0f + rise * 3.6f;
-        for (int ring = 0; ring < 5; ++ring) {
+        for (int ring = 0; ring < 4; ++ring) {
             const float f = static_cast<float>(ring) / 4.0f;
             const float y = stemHeight * f;
             const float r = stemRadius * (0.55f + f * 0.55f) * fadeIn;
-            addCircle(blast.position + up * y, right, forward, r, r, 28);
+            addCircle(blast.position + up * y, right, forward, r, r, 24);
         }
-        for (int ring = 0; ring < 5; ++ring) {
+        for (int ring = 0; ring < 4; ++ring) {
             const float f = static_cast<float>(ring) / 4.0f;
             const float y = (f - 0.5f) * capHeight;
             const float squash = 1.0f - std::abs(f - 0.5f) * 0.72f;
-            addCircle(capCenter + up * y, right, forward, capRadius * squash, capRadius * (0.72f + squash * 0.18f), 44);
+            addCircle(capCenter + up * y, right, forward, capRadius * squash, capRadius * (0.72f + squash * 0.18f), 36);
         }
-        for (int i = 0; i < 22; ++i) {
-            const float a = static_cast<float>(i) / 22.0f * Pi * 2.0f + t * 1.8f;
+        for (int i = 0; i < 16; ++i) {
+            const float a = static_cast<float>(i) / 16.0f * Pi * 2.0f + t * 1.8f;
             const Vec3 side{std::cos(a), 0.0f, std::sin(a)};
             const float curl = std::sin(a * 3.0f + t * 8.0f) * 0.55f;
             addLine(blast.position + side * (stemRadius * 0.45f),
                     capCenter + side * (capRadius * (0.38f + 0.10f * curl)) + up * (capHeight * 0.22f));
         }
-        for (int i = 0; i < 18; ++i) {
-            const float a = static_cast<float>(i) / 18.0f * Pi * 2.0f;
+        for (int i = 0; i < 14; ++i) {
+            const float a = static_cast<float>(i) / 14.0f * Pi * 2.0f;
             const Vec3 side{std::cos(a), 0.0f, std::sin(a)};
             addLine(capCenter + side * (capRadius * 0.55f),
                     capCenter + side * (capRadius * (0.92f + 0.16f * std::sin(a * 4.0f))) - up * (2.0f + rise * 3.0f));
@@ -4182,6 +4183,7 @@ int main() {
 
         glfwPollEvents();
         if (screen == GameScreen::Title) {
+            glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
             if (keyPressed(GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
             if (keyPressed(GLFW_KEY_UP) || keyPressed(GLFW_KEY_W) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_UP)) titleRow = (titleRow + 4) % 5;
             if (keyPressed(GLFW_KEY_DOWN) || keyPressed(GLFW_KEY_S) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) titleRow = (titleRow + 1) % 5;
