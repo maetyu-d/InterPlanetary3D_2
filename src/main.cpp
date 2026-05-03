@@ -53,6 +53,7 @@ using GLsizeiptr = ptrdiff_t;
 #define GL_TEXTURE0 0x84C0
 #define GL_TEXTURE_WRAP_S 0x2802
 #define GL_TEXTURE_WRAP_T 0x2803
+#define GL_LINEAR 0x2601
 #endif
 #ifndef GL_MULTISAMPLE
 #define GL_MULTISAMPLE 0x809D
@@ -434,8 +435,8 @@ struct SatelliteCamera {
     GLuint color = 0;
     GLuint depth = 0;
     int size = 0;
-    int satelliteSize = 45;
-    int missileSize = 240;
+    int satelliteSize = 96;
+    int missileSize = 360;
 };
 
 struct VoxelUniforms {
@@ -1412,8 +1413,8 @@ void ensureSatelliteCamera(SatelliteCamera& camera) {
     glGenTextures(1, &camera.color);
     glBindTexture(GL_TEXTURE_2D, camera.color);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera.size, camera.size, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, camera.color, 0);
@@ -2872,7 +2873,10 @@ void drawOrbitTrail(const World& world, const LineUniforms& lineUniforms, GLuint
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
-    glLineWidth(1.5f);
+    glLineWidth(3.0f);
+    glDrawArrays(GL_LINE_LOOP, 0, static_cast<GLsizei>(data.size() / 3));
+    glUniform4f(lineUniforms.color, color[0], color[1], color[2], color[3] * 0.34f);
+    glLineWidth(7.0f);
     glDrawArrays(GL_LINE_LOOP, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -2910,7 +2914,11 @@ void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo,
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
-    glLineWidth(3.0f);
+    glLineWidth(blast.atomic ? 5.5f : 4.2f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    if (blast.atomic) glUniform4f(lineUniforms.color, 0.90f, 1.0f, 0.05f, (1.0f - t) * 0.28f);
+    else glUniform4f(lineUniforms.color, 1.0f, 0.38f, 0.05f, (1.0f - t) * 0.30f);
+    glLineWidth(blast.atomic ? 12.0f : 8.0f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -2979,7 +2987,11 @@ void drawRocketFlame(const LineUniforms& lineUniforms, GLuint lineVao, GLuint li
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
-    glLineWidth(rocket.atomic ? 3.0f : 2.4f);
+    glLineWidth(rocket.atomic ? 4.8f : 3.6f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    if (rocket.atomic) glUniform4f(lineUniforms.color, 0.20f, 0.70f, 1.0f, 0.26f);
+    else glUniform4f(lineUniforms.color, 1.0f, 0.18f, 0.02f, 0.28f);
+    glLineWidth(rocket.atomic ? 10.0f : 7.0f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -3439,9 +3451,11 @@ void main() {
     energy = max(energy, sweep * 0.42);
     energy = max(energy, edgeGlow * 0.62);
     energy *= flicker;
-    vec3 color = mix(vec3(0.00, 0.18, 0.05), vec3(0.18, 1.0, 0.34), energy);
-    color += vec3(0.22, 0.85, 0.28) * max(sweep, edgeGlow) * 0.38;
-    float alpha = clamp(0.16 + energy * 0.46 + uFeedClarity * 0.12, 0.0, 0.72);
+    float pulse = 0.65 + 0.35 * sin(uTime * 2.8 + p.x * 0.08 - p.y * 0.05);
+    vec3 color = mix(vec3(0.00, 0.16, 0.045), vec3(0.08, 1.0, 0.42), energy);
+    color += vec3(0.28, 1.0, 0.36) * max(sweep, edgeGlow) * (0.50 + pulse * 0.28);
+    color += vec3(0.02, 0.24, 0.10) * pulse;
+    float alpha = clamp(0.12 + energy * 0.62 + uFeedClarity * 0.14, 0.0, 0.82);
     FragColor = vec4(color, alpha);
 }
 )GLSL";
@@ -3696,7 +3710,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #if defined(_WIN32)
-    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_SAMPLES, 8);
 #else
     glfwWindowHint(GLFW_SAMPLES, 0);
 #endif
