@@ -436,7 +436,7 @@ struct SatelliteCamera {
     GLuint color = 0;
     GLuint depth = 0;
     int size = 0;
-    int satelliteSize = 144;
+    int satelliteSize = 512;
     int missileSize = 512;
 };
 
@@ -3892,23 +3892,24 @@ float hash(vec2 p) {
 }
 void main() {
     vec2 uv = vUV;
-    float tear = step(0.990, hash(vec2(floor(uv.y * 34.0), floor(uTime * 9.0)))) * 0.013;
-    uv.x = clamp(uv.x + tear * sin(uv.y * 70.0 + uTime * 11.0), 0.0, 1.0);
+    float tear = step(0.996, hash(vec2(floor(uv.y * 44.0), floor(uTime * 7.0)))) * 0.005;
+    uv.x = clamp(uv.x + tear * sin(uv.y * 96.0 + uTime * 8.0), 0.0, 1.0);
     vec3 color = texture(uTexture, uv).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
     float frame = 1.0 - smoothstep(0.012, 0.026, min(edge.x, edge.y));
     float grey = dot(color, vec3(0.299, 0.587, 0.114));
-    float row = floor(vUV.y * 140.0);
-    float staticNoise = hash(vec2(floor(vUV.x * 180.0) + floor(uTime * 22.0), row));
-    float scan = sin(vUV.y * 720.0) * 0.024;
-    float band = smoothstep(0.030, 0.0, abs(fract(vUV.y * 4.0 + uTime * 0.28) - 0.5)) * 0.10;
-    float dropout = step(0.986, hash(vec2(row, floor(uTime * 7.0)))) * 0.34;
-    float signal = grey * 1.02 + staticNoise * 0.075 + scan - band - dropout;
-    vec3 cctv = mix(color * vec3(0.48, 1.02, 0.78), vec3(signal * 0.34, signal * 1.10, signal * 0.80), 0.58);
+    float row = floor(vUV.y * 220.0);
+    float staticNoise = hash(vec2(floor(vUV.x * 260.0) + floor(uTime * 18.0), row));
+    float scan = sin(vUV.y * 960.0) * 0.012;
+    float band = smoothstep(0.024, 0.0, abs(fract(vUV.y * 4.0 + uTime * 0.22) - 0.5)) * 0.035;
+    float dropout = step(0.995, hash(vec2(row, floor(uTime * 5.0)))) * 0.10;
+    float signal = grey * 1.04 + staticNoise * 0.030 + scan - band - dropout;
+    vec3 cctv = mix(color * vec3(0.70, 1.05, 0.86), vec3(signal * 0.34, signal * 1.08, signal * 0.82), 0.30);
     float vignette = smoothstep(0.78, 0.18, distance(vUV, vec2(0.5)));
-    cctv *= 0.74 + vignette * 0.72;
-    cctv = floor(max(cctv, vec3(0.0)) * 42.0) / 42.0;
-    cctv = mix(cctv, vec3(0.004, 0.010, 0.006), frame * 0.86);
+    cctv *= 0.88 + vignette * 0.48;
+    cctv = pow(max(cctv, vec3(0.0)), vec3(0.82));
+    cctv = mix(cctv, floor(max(cctv, vec3(0.0)) * 96.0) / 96.0, 0.22);
+    cctv = mix(cctv, vec3(0.006, 0.012, 0.008), frame * 0.76);
     FragColor = vec4(cctv, 1.0);
 }
 )GLSL";
@@ -4528,7 +4529,7 @@ int main() {
                 if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, missileVp, renderTime, 1.0f);
             } else {
                 const SatelliteView satelliteView = makeSatelliteView(satellitePosition);
-                drawVoxelScene(satelliteUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, renderTime, 0.0f, false);
+                drawVoxelScene(voxelUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, renderTime, 0.35f, true);
                 if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, satelliteView.vp, renderTime, 0.45f);
                 glDisable(GL_DEPTH_TEST);
                 glEnable(GL_BLEND);
@@ -4550,7 +4551,7 @@ int main() {
             glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo, {0.0f, 0.0f, 1.0f});
-            drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, renderTime, 0.0f, false);
+            drawVoxelScene(voxelUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, renderTime, 0.35f, true);
             if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, renderTime, 0.45f);
             glDisable(GL_DEPTH_TEST);
             glEnable(GL_BLEND);
