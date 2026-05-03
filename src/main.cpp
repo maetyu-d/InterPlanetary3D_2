@@ -3052,7 +3052,7 @@ void main() {
     float spill = smoothstep(0.58, 0.86, dot(lampRay, normalize(uHeadlampDir))) * 0.22;
     float facing = max(dot(n, -lampRay), 0.0);
     float falloff = 1.0 / (1.0 + lampDistance * lampDistance * 0.030);
-    vec3 headlamp = vec3(0.92, 0.94, 0.86) * (cone * 5.80 + spill * 4.0) * facing * falloff;
+    vec3 headlamp = vec3(0.92, 0.94, 0.86) * (cone * 11.60 + spill * 8.0) * facing * falloff;
     light += headlamp;
     vec3 color = pow(base * light * faceAO, vec3(0.95));
     if (kind == 10.0) color += base * 1.15 + vec3(0.0, 0.35, 0.55) * edge;
