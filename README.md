@@ -1,5 +1,7 @@
 # InterPlanetary 3D
 
+<img width="1392" height="926" alt="Screenshot 2026-05-03 at 18 43 07" src="https://github.com/user-attachments/assets/267ee69e-2be3-4823-838a-d42526d1b245" />
+
 InterPlanetary 3Dis a voxel-based, local 2 player duel inspired by Minecraft and Worms, but also WWI trench warefare, drone warfare in Ukraine, British government leafleting on domestic atomic bomb shelters, and the opening sequence of David Lynch's Eraserhead, all rendered with GLFW and modern OpenGL. The world is a six-faced cube planet under a low burning sky, with monochrome terrain, heavy ash fog, rare electric-blue fuel seams, toxic-yellow plutonium pockets, a dying scorched sun, and an orbiting satellite with a live downward camera feed.
 
 You can get an idea of what it looks like [HERE](https://youtu.be/glHxM3eqlF8).
