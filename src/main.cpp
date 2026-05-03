@@ -2628,11 +2628,12 @@ bool projectToUi(const Mat4& m, Vec3 p, Vec2& out) {
     return w > 0.0f;
 }
 
-void drawSatellitePositionLabels(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Mat4& satelliteVp, const Player& playerOne, const Player& playerTwo, int width, int height) {
+void drawSatellitePositionLabels(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Mat4& satelliteVp, const Player& playerOne, const Player& playerTwo, int width, int height, float feedScale = 1.0f) {
     std::vector<UiVertex> vertices;
     vertices.reserve(120);
-    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
-    const float margin = 18.0f;
+    feedScale = std::max(feedScale, 1.0f);
+    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f) / feedScale;
+    const float margin = 18.0f / feedScale;
     const float panelX = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
     const float panelY = margin / static_cast<float>(height);
     const float panelW = pixels / static_cast<float>(width);
@@ -3021,9 +3022,10 @@ void drawSatellitePlayerTracker(const LineUniforms& lineUniforms, GLuint lineVao
     glLineWidth(1.0f);
 }
 
-void drawSatelliteFeed(const TextureUniforms& textureUniforms, GLuint texture, int width, int height, float time) {
-    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
-    const float margin = 18.0f;
+void drawSatelliteFeed(const TextureUniforms& textureUniforms, GLuint texture, int width, int height, float time, float feedScale = 1.0f) {
+    feedScale = std::max(feedScale, 1.0f);
+    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f) / feedScale;
+    const float margin = 18.0f / feedScale;
     const float x0 = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
     const float y0 = (static_cast<float>(height) - pixels - margin) / static_cast<float>(height);
     const float x1 = (static_cast<float>(width) - margin) / static_cast<float>(width);
@@ -3037,9 +3039,10 @@ void drawSatelliteFeed(const TextureUniforms& textureUniforms, GLuint texture, i
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-void drawMissileFeed(const MissileFeedUniforms& uniforms, GLuint texture, int width, int height) {
-    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f);
-    const float margin = 18.0f;
+void drawMissileFeed(const MissileFeedUniforms& uniforms, GLuint texture, int width, int height, float feedScale = 1.0f) {
+    feedScale = std::max(feedScale, 1.0f);
+    const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f) / feedScale;
+    const float margin = 18.0f / feedScale;
     const float x0 = (static_cast<float>(width) - pixels - margin) / static_cast<float>(width);
     const float y0 = (static_cast<float>(height) - pixels - margin) / static_cast<float>(height);
     const float x1 = (static_cast<float>(width) - margin) / static_cast<float>(width);
@@ -4166,6 +4169,13 @@ int main() {
         int width = 1;
         int height = 1;
         glfwGetFramebufferSize(window, &width, &height);
+        float feedScale = 1.0f;
+#if defined(_WIN32)
+        float xScale = 1.0f;
+        float yScale = 1.0f;
+        glfwGetWindowContentScale(window, &xScale, &yScale);
+        feedScale = std::max(xScale, yScale);
+#endif
         const SatelliteView liveSatelliteView = makeSatelliteView(satellitePosition);
         const SatelliteView liveSatelliteViewTwo = makeSatelliteView(satellitePositionTwo, {0.0f, 0.0f, 1.0f});
 
@@ -4284,18 +4294,18 @@ int main() {
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glBindVertexArray(emptyVao);
             if (watchingPlayerTwo) {
-                drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, width, height, renderTime);
-                drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, width, height);
+                drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, width, height, renderTime, feedScale);
+                drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, width, height, feedScale);
                 if (playerTwoMissileMode || playerTwoShotgunMode || rocketTwo.active) drawReticle(uiProgram, uiVao, uiVbo, rocketTwo.active && rocketTwo.age >= 1.0f, renderTime);
                 else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
                 drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
                 const float shotgunProgressTwo = std::clamp(playerTwo.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
                 drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, true);
             } else {
-                if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, width, height);
-                else drawSatelliteFeed(textureUniform, satelliteCamera.color, width, height, renderTime);
+                if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, width, height, feedScale);
+                else drawSatelliteFeed(textureUniform, satelliteCamera.color, width, height, renderTime, feedScale);
                 if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, width, height, renderTime);
-                else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, width, height);
+                else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, width, height, feedScale);
                 if (playerMissileMode || playerShotgunMode || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, renderTime);
                 else drawSmallReticle(uiProgram, uiVao, uiVbo);
                 drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
@@ -4351,10 +4361,10 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindVertexArray(emptyVao);
-        if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, leftWidth, height);
-        else drawSatelliteFeed(textureUniform, satelliteCamera.color, leftWidth, height, renderTime);
+        if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, leftWidth, height, feedScale);
+        else drawSatelliteFeed(textureUniform, satelliteCamera.color, leftWidth, height, renderTime, feedScale);
         if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, leftWidth, height, renderTime);
-        else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, leftWidth, height);
+        else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, leftWidth, height, feedScale);
         if (playerMissileMode || playerShotgunMode || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, renderTime);
         else drawSmallReticle(uiProgram, uiVao, uiVbo);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
@@ -4394,8 +4404,8 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindVertexArray(emptyVao);
-        drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, rightWidth, height, renderTime);
-        drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, rightWidth, height);
+        drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, rightWidth, height, renderTime, feedScale);
+        drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, rightWidth, height, feedScale);
         if (playerTwoMissileMode || playerTwoShotgunMode || rocketTwo.active) drawReticle(uiProgram, uiVao, uiVbo, rocketTwo.active && rocketTwo.age >= 1.0f, renderTime);
         else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
