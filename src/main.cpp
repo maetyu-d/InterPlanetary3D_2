@@ -2278,12 +2278,13 @@ void addUiTextCentered(std::vector<UiVertex>& vertices, float centerX, float y, 
     addUiText(vertices, centerX - uiTextWidth(size, text) * 0.5f, y, size, text, color);
 }
 
-void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool shotgun, bool rocketLauncher, float progress, float time, bool alternatePalette = false) {
+void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool shotgun, bool rocketLauncher, float progress, float time, bool alternatePalette = false, float impact = 0.0f) {
     const float action = (mining || building || shotgun || rocketLauncher) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
+    impact = std::clamp(impact, 0.0f, 1.0f);
     const float idle = std::sin(time * 1.7f) * 0.006f;
-    const float sx = -0.015f - action * 0.030f;
-    const float sy = idle + action * 0.030f;
-    const float swing = -0.50f - action * 0.28f;
+    const float sx = -0.015f - action * 0.030f - impact * 0.045f;
+    const float sy = idle + action * 0.030f + impact * 0.040f;
+    const float swing = -0.50f - action * 0.28f - impact * 0.30f;
     std::vector<UiVertex> vertices;
     vertices.reserve(108);
 
@@ -2332,6 +2333,10 @@ void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool bu
             : (building ? std::array<float, 4>{0.18f, 0.19f, 0.19f, 1.0f} : std::array<float, 4>{0.02f, 0.28f, 0.29f, 1.0f});
         addUiRectRotated(vertices, pivot, swing, -0.105f, -0.060f, 0.180f, 0.050f, toolShadow);
         addUiRectRotated(vertices, pivot, swing, -0.085f, -0.080f, 0.115f, 0.060f, toolColor);
+        if (impact > 0.01f) {
+            addUiRectRotated(vertices, pivot, swing, -0.135f, -0.106f, 0.150f * impact, 0.018f, {1.0f, 0.52f, 0.10f, 0.64f * impact});
+            addUiRectRotated(vertices, pivot, swing, -0.128f, -0.026f, 0.090f * impact, 0.014f, {1.0f, 0.82f, 0.30f, 0.45f * impact});
+        }
     }
 
     addUiRect(vertices, 0.75f + sx, 0.76f + sy, 0.24f, 0.14f, {0.055f, 0.048f, 0.044f, 0.94f});
@@ -2403,30 +2408,36 @@ void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool minin
     if (!mining && impact <= 0.0f) return;
     progress = std::clamp(progress, 0.0f, 1.0f);
     impact = std::clamp(impact, 0.0f, 1.0f);
-    const float bite = mining ? std::pow(progress, 1.7f) : 0.0f;
+    const float bite = mining ? std::pow(progress, 1.35f) : 0.0f;
     const float pulse = 0.55f + 0.45f * std::sin(time * 42.0f);
     std::vector<UiVertex> vertices;
     vertices.reserve(160);
     if (impact > 0.0f) {
-        addUiRect(vertices, 0.0f, 0.0f, 1.0f, 0.055f * impact, {1.0f, 0.44f, 0.08f, 0.20f * impact});
-        addUiRect(vertices, 0.0f, 0.945f - 0.030f * impact, 1.0f, 0.085f * impact, {1.0f, 0.34f, 0.06f, 0.18f * impact});
-        addUiRect(vertices, 0.0f, 0.0f, 0.050f * impact, 1.0f, {1.0f, 0.30f, 0.05f, 0.12f * impact});
-        addUiRect(vertices, 0.950f - 0.025f * impact, 0.0f, 0.075f * impact, 1.0f, {1.0f, 0.30f, 0.05f, 0.12f * impact});
+        addUiRect(vertices, 0.0f, 0.0f, 1.0f, 0.075f * impact, {1.0f, 0.46f, 0.08f, 0.26f * impact});
+        addUiRect(vertices, 0.0f, 0.930f - 0.035f * impact, 1.0f, 0.105f * impact, {1.0f, 0.30f, 0.05f, 0.24f * impact});
+        addUiRect(vertices, 0.0f, 0.0f, 0.070f * impact, 1.0f, {1.0f, 0.28f, 0.04f, 0.18f * impact});
+        addUiRect(vertices, 0.930f - 0.030f * impact, 0.0f, 0.105f * impact, 1.0f, {1.0f, 0.28f, 0.04f, 0.18f * impact});
+        for (int i = 0; i < 14; ++i) {
+            const float a = static_cast<float>(i) * 0.448799f + time * 3.0f;
+            const float r = 0.050f + (1.0f - impact) * 0.050f + 0.010f * static_cast<float>(i % 4);
+            const float s = 0.004f + impact * 0.006f;
+            addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {1.0f, 0.62f, 0.12f, impact * 0.55f});
+        }
     }
     if (mining) {
         const std::array<float, 4> hot{1.0f, 0.58f + pulse * 0.25f, 0.18f, 0.28f + bite * 0.34f};
-        const float gap = 0.022f - bite * 0.008f;
-        const float len = 0.018f + bite * 0.042f;
-        const float thick = 0.002f + bite * 0.003f;
+        const float gap = 0.022f - bite * 0.012f;
+        const float len = 0.020f + bite * 0.060f;
+        const float thick = 0.0022f + bite * 0.0048f;
         addUiRect(vertices, 0.5f - thick * 0.5f, 0.5f - gap - len, thick, len, hot);
         addUiRect(vertices, 0.5f - thick * 0.5f, 0.5f + gap, thick, len, hot);
         addUiRect(vertices, 0.5f - gap - len, 0.5f - thick * 0.5f, len, thick, hot);
         addUiRect(vertices, 0.5f + gap, 0.5f - thick * 0.5f, len, thick, hot);
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 12; ++i) {
             const float a = static_cast<float>(i) * 0.785398f + time * 0.8f;
-            const float r = 0.030f + bite * (0.032f + 0.006f * static_cast<float>(i % 3));
-            const float s = 0.0026f + bite * 0.003f;
-            addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {1.0f, 0.50f, 0.10f, bite * 0.42f});
+            const float r = 0.026f + bite * (0.052f + 0.007f * static_cast<float>(i % 4));
+            const float s = 0.0028f + bite * 0.0045f;
+            addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {1.0f, 0.52f, 0.09f, bite * 0.55f});
         }
     }
     glUseProgram(uiProgram);
@@ -2816,15 +2827,15 @@ void drawSelection(const LineUniforms& lineUniforms, GLuint lineVao, GLuint line
         const Vec3 v = f3 - f0;
         const Vec3 center = f0 + u * 0.5f + v * 0.5f;
         const float fracture = std::clamp(progress, 0.0f, 1.0f);
-        const int crackCount = static_cast<int>(fracture * 9.0f);
+        const int crackCount = static_cast<int>(fracture * 14.0f);
         for (int i = 0; i < crackCount; ++i) {
             const float a = static_cast<float>(i) * 2.39996f + time * 0.035f;
-            const float len = (0.18f + 0.08f * static_cast<float>(i % 3)) * (0.45f + fracture * 0.85f);
+            const float len = (0.20f + 0.10f * static_cast<float>(i % 3)) * (0.50f + fracture * 1.05f);
             const Vec3 dir = normalize(u * std::cos(a) + v * std::sin(a));
             const Vec3 jitter = u * (std::sin(a * 1.7f) * 0.10f * fracture) + v * (std::cos(a * 1.3f) * 0.08f * fracture);
             const Vec3 start = center + jitter * 0.35f;
             addLine(start, start + dir * len);
-            if (fracture > 0.56f) addLine(start + dir * (len * 0.48f), start + dir * (len * 0.68f) + normalize(v * std::cos(a) - u * std::sin(a)) * (len * 0.34f));
+            if (fracture > 0.42f) addLine(start + dir * (len * 0.48f), start + dir * (len * 0.70f) + normalize(v * std::cos(a) - u * std::sin(a)) * (len * (0.28f + fracture * 0.18f)));
         }
     }
 
@@ -4136,7 +4147,7 @@ int main() {
 
         Vec3 hit{};
         Vec3 previous{};
-        bool hasHit = raycastBlock(world, eye, look, 8.0f, hit, previous);
+        bool hasHit = raycastBlock(world, eye, look, 4.0f, hit, previous);
         const bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         const bool rightDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         const bool playerPrimaryFireDown = leftDown;
@@ -4158,7 +4169,7 @@ int main() {
         playerTwo.hurtTimer = std::max(0.0f, playerTwo.hurtTimer - simDt);
         toolHitCooldown = std::max(0.0f, toolHitCooldown - simDt);
         toolHitCooldownTwo = std::max(0.0f, toolHitCooldownTwo - simDt);
-        miningImpactTimer = std::max(0.0f, miningImpactTimer - simDt * 5.2f);
+        miningImpactTimer = std::max(0.0f, miningImpactTimer - simDt * 4.2f);
         const int scoreBeforeCombatOne = player.score;
         const int scoreBeforeCombatTwo = playerTwo.score;
         const bool playerAtomic = playerToolMode == ToolMode::AtomicMissile;
@@ -4259,7 +4270,7 @@ int main() {
                 world.set(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z), Block::Air);
                 rebuildMeshes(world, opaque, transparentMesh);
                 satelliteFeedDirty = true;
-                miningImpactTimer = 1.0f;
+                miningImpactTimer = 1.35f;
                 miningTimer = 0.0f;
                 miningTarget = {-9999.0f, -9999.0f, -9999.0f};
             }
@@ -4481,7 +4492,7 @@ int main() {
                     ? miningTimer / std::max(0.001f, mineDuration(world.get(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z))))
                     : 0.0f;
                 drawMiningFeedback(uiProgram, uiVao, uiVbo, miningFeedback, miningFeedbackProgress, miningImpactTimer, renderTime);
-                drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, shotgunProgress, renderTime);
+                drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, shotgunProgress, renderTime, false, miningImpactTimer);
             }
             glDisable(GL_BLEND);
             glEnable(GL_CULL_FACE);
@@ -4541,7 +4552,7 @@ int main() {
         drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
         const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
         drawMiningFeedback(uiProgram, uiVao, uiVbo, showingMine, interactionProgress, miningImpactTimer, renderTime);
-        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime);
+        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime, false, miningImpactTimer);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
