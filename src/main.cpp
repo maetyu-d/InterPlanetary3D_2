@@ -3470,9 +3470,9 @@ vec3 acesTone(vec3 color) {
 
 vec3 colorGrade(vec3 color) {
     color = acesTone(color);
-    color = mix(vec3(dot(color, vec3(0.299, 0.587, 0.114))), color, 1.18);
-    color *= vec3(1.06, 1.02, 0.96);
-    color += vec3(0.010, 0.006, 0.002);
+    color = mix(vec3(dot(color, vec3(0.299, 0.587, 0.114))), color, 1.26);
+    color *= vec3(1.08, 1.025, 0.965);
+    color += vec3(0.012, 0.007, 0.003);
     return clamp(color, 0.0, 1.0);
 }
 
@@ -3590,11 +3590,11 @@ void main() {
     n = bumpedNormal(n, p, roughBlock * 0.22 + polishedBlock * 0.08 + livingBlock * 0.16);
 
     float grey = dot(base, vec3(0.299, 0.587, 0.114));
-    base = mix(vec3(grey), base, kind >= 10.0 ? 1.0 : 0.28);
+    base = mix(vec3(grey), base, kind >= 10.0 ? 1.0 : 0.43);
     vec3 faceOffset = abs(vWorldPos - vec3(36.0));
     bool sideFace = max(faceOffset.x, faceOffset.z) > faceOffset.y;
     if (sideFace && kind < 10.0) {
-        base = mix(base, vec3(0.025, 0.115, 0.070), 0.72);
+        base = mix(base, vec3(0.030, 0.118, 0.074), 0.54);
     }
 
     vec3 local = abs(fract(p) - 0.5);
@@ -3603,19 +3603,19 @@ void main() {
     float bevel = smoothstep(0.34, 0.50, edgeDistance);
     float bevelCore = smoothstep(0.43, 0.50, edgeDistance);
     float cornerDirt = smoothstep(0.38, 0.50, min(min(local.x, local.y), local.z));
-    float faceAO = mix(0.66, 1.03, edge);
-    faceAO *= 0.78 + 0.22 * clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
-    faceAO *= 1.0 - cornerDirt * 0.16 * (1.0 - polishedBlock);
-    faceAO *= 1.0 - bevelCore * 0.16 * roughBlock;
+    float faceAO = mix(0.70, 1.06, edge);
+    faceAO *= 0.80 + 0.24 * clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
+    faceAO *= 1.0 - cornerDirt * 0.13 * (1.0 - polishedBlock);
+    faceAO *= 1.0 - bevelCore * 0.12 * roughBlock;
 
     float sun = max(dot(n, normalize(-uSunDir)), 0.0);
     float sky = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 viewDir = normalize(uCamera - vWorldPos);
     vec3 sunDir = normalize(-uSunDir);
-    float rim = pow(max(1.0 - dot(viewDir, n), 0.0), 2.0) * 0.12;
+    float rim = pow(max(1.0 - dot(viewDir, n), 0.0), 2.0) * 0.16;
     float bounce = smoothstep(0.0, 1.0, 1.0 - abs(n.y));
-    vec3 light = vec3(0.13, 0.13, 0.14) + vec3(0.60, 0.57, 0.52) * sun * 0.54 + vec3(0.16, 0.19, 0.23) * sky * 0.30 + vec3(0.12, 0.045, 0.025) * bounce * 0.18 + rim;
-    light += vec3(0.18, 0.20, 0.19) * uFeedClarity;
+    vec3 light = vec3(0.145, 0.145, 0.152) + vec3(0.68, 0.63, 0.55) * sun * 0.60 + vec3(0.18, 0.22, 0.27) * sky * 0.34 + vec3(0.13, 0.050, 0.030) * bounce * 0.20 + rim;
+    light += vec3(0.20, 0.22, 0.21) * uFeedClarity;
     vec3 toPoint = vWorldPos - uCamera;
     float lampDistance = length(toPoint);
     vec3 lampRay = normalize(toPoint);
@@ -3630,19 +3630,21 @@ void main() {
     float hardSurface = (kind == 3.0 || kind == 19.0 || kind == 20.0 || kind == 21.0) ? 1.0 : 0.0;
     vec3 halfSun = normalize(sunDir + viewDir);
     vec3 halfLamp = normalize(-lampRay + viewDir);
-    float sunSpec = pow(max(dot(n, halfSun), 0.0), mix(18.0, 56.0, polished)) * (0.08 + polished * 0.28 + hardSurface * 0.08);
-    float lampSpec = pow(max(dot(n, halfLamp), 0.0), mix(16.0, 64.0, polished)) * cone * falloff * (0.34 + polished * 1.15);
+    float sunSpec = pow(max(dot(n, halfSun), 0.0), mix(20.0, 72.0, polished)) * (0.10 + polished * 0.36 + hardSurface * 0.12);
+    float lampSpec = pow(max(dot(n, halfLamp), 0.0), mix(18.0, 78.0, polished)) * cone * falloff * (0.40 + polished * 1.30);
     float fresnel = pow(max(1.0 - dot(viewDir, n), 0.0), 3.0);
     color += vec3(1.0, 0.94, 0.78) * sunSpec + vec3(0.84, 0.92, 1.0) * lampSpec;
     if (kind == 7.0 || kind == 22.0) color += vec3(0.20, 0.55, 0.72) * fresnel * (0.55 + polishedBlock);
     if (kind == 9.0) color += vec3(0.46, 0.06, 0.10) * fresnel * 0.72;
+    float microGlint = pow(max(fbm(p * 18.0 + uTime * 0.035) - 0.68, 0.0) * 3.1, 3.0);
+    color += vec3(0.95, 0.88, 0.72) * microGlint * (hardSurface * 0.10 + polishedBlock * 0.18);
     color += vec3(0.18, 0.15, 0.11) * bevel * sun * (0.40 + hardSurface * 0.32);
     color += vec3(0.34, 0.42, 0.46) * bevel * cone * falloff * (0.55 + polishedBlock * 1.15);
     color = mix(color, color * vec3(0.78, 0.80, 0.82), bevelCore * 0.18 * (1.0 - polishedBlock));
     if (kind == 10.0) color += base * 1.65 + vec3(0.0, 0.70, 1.05) * edge + vec3(0.00, 0.38, 0.62) * (1.0 - cornerDirt) + vec3(0.0, 0.65, 0.95) * bevel;
     if (kind == 11.0) color += base * 1.35 + vec3(0.90, 1.05, 0.0) * edge + vec3(0.55, 0.62, 0.00) * (1.0 - cornerDirt) + vec3(0.75, 0.86, 0.0) * bevel;
     float distanceToEye = length(uCamera - vWorldPos);
-    float distanceFog = smoothstep(14.0, 78.0, distanceToEye) * mix(1.0, 0.28, uFeedClarity);
+    float distanceFog = smoothstep(18.0, 86.0, distanceToEye) * mix(1.0, 0.24, uFeedClarity);
     float lowFog = (1.0 - smoothstep(3.0, 26.0, vWorldPos.y)) * smoothstep(4.0, 48.0, distanceToEye) * mix(1.0, 0.18, uFeedClarity);
     float ashBands = smoothstep(0.34, 0.72, noise(vec3(vWorldPos.xz * 0.085 + uTime * 0.018, 3.0))) * distanceFog;
     float highMist = smoothstep(0.52, 0.86, noise(vec3(vWorldPos.xz * 0.045 - uTime * 0.010, vWorldPos.y * 0.035))) * smoothstep(24.0, 90.0, distanceToEye);
@@ -3650,7 +3652,7 @@ void main() {
     vec3 ashFog = mix(uFogColor, vec3(0.13, 0.12, 0.11), lowFog * 0.90 + ashBands * 0.45);
     vec3 fogColor = mix(ashFog, hotHorizon, smoothstep(24.0, 80.0, distanceToEye) * (1.0 - smoothstep(0.0, 18.0, vWorldPos.y)) * 0.36);
     fogColor = mix(fogColor, vec3(0.070, 0.082, 0.085), highMist * 0.32);
-    float fog = clamp(distanceFog + lowFog * 0.60 + ashBands * 0.30 + highMist * 0.18, 0.0, 0.985);
+    float fog = clamp(distanceFog + lowFog * 0.55 + ashBands * 0.24 + highMist * 0.16, 0.0, 0.965);
     color = mix(color, fogColor, fog);
     float contrastDirt = fbm(p * 1.35) * 0.10 + cracks(p * 0.72) * 0.12;
     color *= 1.0 - contrastDirt * (1.0 - polishedBlock);
@@ -3780,11 +3782,12 @@ float fbm(vec2 p) {
 vec3 toneSky(vec3 color, vec2 uv) {
     float grain = hash(floor(uv * vec2(1280.0, 720.0))) - 0.5;
     vec2 centered = uv - vec2(0.5);
-    float vignette = 1.0 - smoothstep(0.35, 0.86, dot(centered, centered) * 1.9);
-    color += grain * 0.012;
-    color = color / (color + vec3(0.62));
-    color *= mix(0.80, 1.08, vignette);
-    return pow(max(color, vec3(0.0)), vec3(0.88));
+    float vignette = 1.0 - smoothstep(0.34, 0.92, dot(centered, centered) * 1.75);
+    color += grain * 0.009;
+    color = color / (color + vec3(0.56));
+    color *= mix(0.86, 1.10, vignette);
+    color = mix(vec3(dot(color, vec3(0.299, 0.587, 0.114))), color, 1.12);
+    return pow(max(color, vec3(0.0)), vec3(0.86));
 }
 void main() {
     vec2 uv = vUV;
@@ -3962,11 +3965,14 @@ void main() {
     vec3 cctv = mix(ink, mix(low, high, shape), 0.82);
     cctv += vec3(0.055, 0.19, 0.22) * contour * 0.22;
     float resourceSignal = max(color.b - max(color.r, color.g) * 0.42, color.g - color.r * 0.55);
-    cctv += vec3(0.05, 0.22, 0.20) * smoothstep(0.25, 0.85, resourceSignal) * 0.42;
+    cctv += vec3(0.05, 0.24, 0.22) * smoothstep(0.22, 0.82, resourceSignal) * 0.50;
+    float latitude = 1.0 - smoothstep(0.0025, 0.0065, abs(fract(vUV.y * 18.0 + uTime * 0.025) - 0.5));
+    float longitude = 1.0 - smoothstep(0.0025, 0.0065, abs(fract(vUV.x * 18.0 - uTime * 0.018) - 0.5));
+    cctv += vec3(0.015, 0.070, 0.075) * max(latitude, longitude) * 0.22;
     float vignette = smoothstep(0.78, 0.18, distance(vUV, vec2(0.5)));
-    cctv *= 0.78 + vignette * 0.45;
+    cctv *= 0.82 + vignette * 0.48;
     cctv = pow(max(cctv, vec3(0.0)), vec3(0.86));
-    cctv = mix(cctv, vec3(0.002, 0.004, 0.008), frame * 0.78);
+    cctv = mix(cctv, vec3(0.002, 0.004, 0.008), frame * 0.72);
     FragColor = vec4(cctv, 1.0);
 }
 )GLSL";
@@ -3983,12 +3989,14 @@ void main() {
     vec3 color = texture(uTexture, vUV).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
     float frame = 1.0 - smoothstep(0.010, 0.018, min(edge.x, edge.y));
-    float vignette = smoothstep(0.88, 0.20, distance(vUV, vec2(0.5)));
+    float vignette = smoothstep(0.90, 0.18, distance(vUV, vec2(0.5)));
     float grain = hash(floor(vUV * vec2(900.0, 900.0))) - 0.5;
     float scan = sin(vUV.y * 1440.0) * 0.003;
-    color = color * 1.08 + grain * 0.006 + scan;
-    color = pow(max(color, vec3(0.0)), vec3(0.90)) * (0.96 + vignette * 0.22);
-    color = mix(color, vec3(0.010, 0.012, 0.011), frame * 0.56);
+    vec3 sharp = texture(uTexture, clamp(vUV + vec2(0.0014, 0.0), 0.0, 1.0)).rgb + texture(uTexture, clamp(vUV - vec2(0.0014, 0.0), 0.0, 1.0)).rgb;
+    color = mix(color, color * 1.36 - sharp * 0.18, 0.28);
+    color = color * 1.11 + grain * 0.005 + scan;
+    color = pow(max(color, vec3(0.0)), vec3(0.88)) * (0.98 + vignette * 0.24);
+    color = mix(color, vec3(0.010, 0.012, 0.011), frame * 0.50);
     FragColor = vec4(color, 1.0);
 }
 )GLSL";
