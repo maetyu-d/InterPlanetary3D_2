@@ -437,7 +437,7 @@ struct SatelliteCamera {
     GLuint depth = 0;
     int size = 0;
     int satelliteSize = 1024;
-    int missileSize = 512;
+    int missileSize = 1024;
 };
 
 struct VoxelUniforms {
@@ -3915,13 +3915,19 @@ const char* missileFeedFragmentShader = R"GLSL(
 in vec2 vUV;
 uniform sampler2D uTexture;
 out vec4 FragColor;
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(59.7, 193.3))) * 18742.143);
+}
 void main() {
     vec3 color = texture(uTexture, vUV).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
     float frame = 1.0 - smoothstep(0.010, 0.018, min(edge.x, edge.y));
-    float vignette = smoothstep(0.86, 0.22, distance(vUV, vec2(0.5)));
-    color = pow(max(color, vec3(0.0)), vec3(0.78)) * (1.30 + vignette * 0.16);
-    color = mix(color, vec3(0.02, 0.025, 0.022), frame * 0.58);
+    float vignette = smoothstep(0.88, 0.20, distance(vUV, vec2(0.5)));
+    float grain = hash(floor(vUV * vec2(900.0, 900.0))) - 0.5;
+    float scan = sin(vUV.y * 1440.0) * 0.003;
+    color = color * 1.08 + grain * 0.006 + scan;
+    color = pow(max(color, vec3(0.0)), vec3(0.90)) * (0.96 + vignette * 0.22);
+    color = mix(color, vec3(0.010, 0.012, 0.011), frame * 0.56);
     FragColor = vec4(color, 1.0);
 }
 )GLSL";
