@@ -23,9 +23,12 @@ The game runs in local two-player split-screen. Player 1 starts on the top face;
 - Hold `Left Shift` to sprint
 - Hold left click to mine a block
 - Hold right click to build against the highlighted face
+- The mining/building tool damages the other player at close range
 - `1-2` to select normal or hard building blocks
-- `M` to pick up/arm the rocket launcher
-- Left click while armed to fire a rocket; after one second, the top-right feed switches to the missile nose camera
+- `M` to cycle mine/build, missile, and atomic missile modes
+- Left click in missile or atomic missile mode to fire; after one second, the top-right feed switches to the missile nose camera
+- Rockets cost 1 fuel and 1 plutonium; atomic rockets cost 5 fuel and 5 plutonium
+- Mine fuel/plutonium or blast resource pockets to collect resources
 - `O` to cycle the satellite between current-face, opposite-face, and polar orbits
 - `-` and `=` to lower/raise the satellite orbit
 - `R` to regenerate the world
@@ -38,3 +41,6 @@ The game runs in local two-player split-screen. Player 1 starts on the top face;
 - Arrow keys to look
 - `Enter` to jump
 - Hold `Right Shift` to sprint
+- `P` to cycle mine/build, missile, and atomic missile modes
+- `Right Control` to fire the selected missile type
+- In mine/build mode, `Right Control` swings the tool at close range
