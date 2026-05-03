@@ -2705,7 +2705,7 @@ bool projectToUi(const Mat4& m, Vec3 p, Vec2& out) {
 
 void drawSatellitePositionLabels(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Mat4& satelliteVp, const Player& playerOne, const Player& playerTwo, int width, int height, float feedScale = 1.0f) {
     std::vector<UiVertex> vertices;
-    vertices.reserve(240);
+    vertices.reserve(160);
     feedScale = std::max(feedScale, 1.0f);
     const float pixels = std::clamp(static_cast<float>(height) * 0.58f, 360.0f, 520.0f) / feedScale;
     const float margin = 18.0f / feedScale;
@@ -2713,17 +2713,6 @@ void drawSatellitePositionLabels(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, c
     const float panelY = margin / static_cast<float>(height);
     const float panelW = pixels / static_cast<float>(width);
     const float panelH = pixels / static_cast<float>(height);
-    const std::array<float, 4> telemetry{0.62f, 0.92f, 1.0f, 0.54f};
-    const std::array<float, 4> dim{0.28f, 0.52f, 0.62f, 0.34f};
-    addUiRect(vertices, panelX + panelW * 0.075f, panelY + panelH * 0.075f, panelW * 0.26f, panelH * 0.004f, telemetry);
-    addUiRect(vertices, panelX + panelW * 0.075f, panelY + panelH * 0.075f, panelW * 0.004f, panelH * 0.070f, telemetry);
-    addUiRect(vertices, panelX + panelW * 0.665f, panelY + panelH * 0.075f, panelW * 0.26f, panelH * 0.004f, telemetry);
-    addUiRect(vertices, panelX + panelW * 0.921f, panelY + panelH * 0.075f, panelW * 0.004f, panelH * 0.070f, telemetry);
-    for (int i = 0; i < 8; ++i) {
-        const float tx = panelX + panelW * (0.18f + static_cast<float>(i) * 0.080f);
-        addUiRect(vertices, tx, panelY + panelH * 0.905f, panelW * 0.010f, panelH * (i % 2 == 0 ? 0.028f : 0.018f), i < 5 ? telemetry : dim);
-    }
-
     auto addLabel = [&vertices, &satelliteVp, panelX, panelY, panelW, panelH](const Player& player, int digit, std::array<float, 4> color) {
         const Vec3 head = player.position + Vec3{0.0f, player.upSign * (PlayerHeight + 3.8f), 0.0f};
         Vec2 pos{};
@@ -2731,8 +2720,8 @@ void drawSatellitePositionLabels(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, c
         pos.x = panelX + std::clamp(pos.x, 0.06f, 0.88f) * panelW;
         pos.y = panelY + std::clamp(pos.y, 0.06f, 0.84f) * panelH;
         const float size = 0.043f;
-        const float bw = panelW * 0.045f;
-        const float bh = panelH * 0.045f;
+        const float bw = panelW * 0.040f;
+        const float bh = panelH * 0.040f;
         const float t = 0.0035f;
         addUiRect(vertices, pos.x - bw, pos.y - bh, bw * 0.55f, t, color);
         addUiRect(vertices, pos.x - bw, pos.y - bh, t, bh * 0.55f, color);
@@ -2742,9 +2731,9 @@ void drawSatellitePositionLabels(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, c
         addUiRect(vertices, pos.x - bw, pos.y + bh * 0.45f, t, bh * 0.55f, color);
         addUiRect(vertices, pos.x + bw * 0.45f, pos.y + bh, bw * 0.55f, t, color);
         addUiRect(vertices, pos.x + bw, pos.y + bh * 0.45f, t, bh * 0.55f, color);
-        addUiRect(vertices, pos.x - 0.011f, pos.y - 0.009f, 0.040f, 0.054f, {0.0f, 0.0f, 0.0f, 0.54f});
+        addUiRect(vertices, pos.x - 0.011f, pos.y - 0.009f, 0.040f, 0.054f, {0.0f, 0.0f, 0.0f, 0.42f});
         addHudDigit(vertices, pos.x, pos.y, size, digit, color);
-        addUiRect(vertices, pos.x - 0.008f, pos.y + 0.048f, 0.037f, 0.003f, {color[0], color[1], color[2], 0.82f});
+        addUiRect(vertices, pos.x - 0.008f, pos.y + 0.048f, 0.037f, 0.003f, {color[0], color[1], color[2], 0.72f});
     };
     addLabel(playerOne, 1, {1.0f, 0.30f, 0.08f, 0.98f});
     addLabel(playerTwo, 2, {0.15f, 0.55f, 1.0f, 0.98f});
@@ -3914,28 +3903,23 @@ float hash(vec2 p) {
     return fract(sin(dot(p, vec2(41.7, 289.3))) * 15342.731);
 }
 void main() {
-    vec2 uv = vUV;
-    float tear = step(0.9975, hash(vec2(floor(uv.y * 58.0), floor(uTime * 5.0)))) * 0.0025;
-    uv.x = clamp(uv.x + tear * sin(uv.y * 132.0 + uTime * 5.5), 0.0, 1.0);
-    vec3 color = texture(uTexture, uv).rgb;
+    vec3 color = texture(uTexture, vUV).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
     float frame = 1.0 - smoothstep(0.012, 0.026, min(edge.x, edge.y));
     float grey = dot(color, vec3(0.299, 0.587, 0.114));
-    float row = floor(vUV.y * 520.0);
-    float staticNoise = hash(vec2(floor(vUV.x * 680.0) + floor(uTime * 14.0), row)) - 0.5;
-    float scan = sin(vUV.y * 1440.0) * 0.006;
-    float band = smoothstep(0.020, 0.0, abs(fract(vUV.y * 5.0 + uTime * 0.14) - 0.5)) * 0.018;
-    float drop = step(0.997, hash(vec2(row, floor(uTime * 4.0)))) * 0.10;
-    vec3 coldGrade = mix(vec3(grey), color, 0.62) * vec3(0.88, 0.96, 1.08);
-    vec3 horizonLift = vec3(0.020, 0.034, 0.046) * smoothstep(0.10, 0.92, grey);
-    vec3 cctv = coldGrade * 1.06 + horizonLift + staticNoise * 0.012 + scan - band - drop;
-    cctv.r += color.r * 0.012;
-    cctv.b += color.b * 0.018;
+    float shape = smoothstep(0.08, 0.88, grey);
+    float contour = 1.0 - smoothstep(0.010, 0.035, abs(fract(grey * 5.0) - 0.5));
+    vec3 ink = vec3(0.006, 0.010, 0.018);
+    vec3 low = vec3(0.020, 0.055, 0.080);
+    vec3 high = vec3(0.54, 0.82, 0.88);
+    vec3 cctv = mix(ink, mix(low, high, shape), 0.82);
+    cctv += vec3(0.055, 0.19, 0.22) * contour * 0.22;
+    float resourceSignal = max(color.b - max(color.r, color.g) * 0.42, color.g - color.r * 0.55);
+    cctv += vec3(0.05, 0.22, 0.20) * smoothstep(0.25, 0.85, resourceSignal) * 0.42;
     float vignette = smoothstep(0.78, 0.18, distance(vUV, vec2(0.5)));
-    cctv *= 0.82 + vignette * 0.46;
-    cctv = mix(cctv, floor(max(cctv, vec3(0.0)) * 128.0) / 128.0, 0.18);
-    cctv = pow(max(cctv, vec3(0.0)), vec3(0.88));
-    cctv = mix(cctv, vec3(0.004, 0.007, 0.010), frame * 0.70);
+    cctv *= 0.78 + vignette * 0.45;
+    cctv = pow(max(cctv, vec3(0.0)), vec3(0.86));
+    cctv = mix(cctv, vec3(0.002, 0.004, 0.008), frame * 0.78);
     FragColor = vec4(cctv, 1.0);
 }
 )GLSL";
