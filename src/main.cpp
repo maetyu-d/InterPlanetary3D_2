@@ -3208,6 +3208,68 @@ void drawRocketFlame(const LineUniforms& lineUniforms, GLuint lineVao, GLuint li
     glLineWidth(1.0f);
 }
 
+void drawShotgunMuzzleParticles(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 eye, Vec3 look, float upSign, float flashTimer, float time, bool alternatePalette = false) {
+    const float life = std::clamp(flashTimer / 0.18f, 0.0f, 1.0f);
+    if (life <= 0.0f) return;
+
+    const float burst = std::sin(life * Pi);
+    const Vec3 forward = normalize(look);
+    Vec3 right = normalize(cross(forward, {0.0f, upSign, 0.0f}));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    const Vec3 up = normalize(cross(right, forward));
+    const Vec3 muzzle = eye + forward * 0.64f + right * (alternatePalette ? -0.18f : 0.18f) - up * 0.13f;
+
+    std::vector<float> data;
+    data.reserve(3 * 180);
+    auto addLine = [&data](Vec3 a, Vec3 b) {
+        data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
+        data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
+    };
+
+    for (int i = 0; i < 26; ++i) {
+        const float lane = static_cast<float>(i);
+        const float a = lane / 26.0f * Pi * 2.0f + time * 2.7f;
+        const float jitter = std::sin(time * 61.0f + lane * 17.13f);
+        const float fan = (0.018f + 0.012f * static_cast<float>(i % 4)) * burst;
+        const Vec3 spray = normalize(forward
+            + right * (std::cos(a) * fan + jitter * 0.012f)
+            + up * (std::sin(a) * fan * 0.62f + std::cos(lane * 3.1f) * 0.010f));
+        const float nearLen = 0.16f + 0.05f * static_cast<float>(i % 3);
+        const float farLen = 0.42f + 0.20f * std::abs(std::sin(lane * 9.71f));
+        addLine(muzzle + spray * nearLen, muzzle + spray * (nearLen + farLen * burst));
+    }
+
+    for (int i = 0; i < 14; ++i) {
+        const float lane = static_cast<float>(i);
+        const float side = (std::sin(lane * 12.989f + time * 9.0f) * 0.5f);
+        const float lift = std::cos(lane * 8.31f + time * 6.0f) * 0.35f;
+        const Vec3 start = muzzle + forward * (0.08f + 0.025f * lane);
+        const Vec3 end = start + forward * (0.24f + 0.08f * burst)
+            + right * side * (0.08f + 0.08f * burst)
+            + up * lift * (0.05f + 0.05f * burst);
+        addLine(start, end);
+    }
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    const std::array<float, 4> hot = alternatePalette
+        ? std::array<float, 4>{0.55f, 0.78f, 1.0f, 0.78f * burst}
+        : std::array<float, 4>{1.0f, 0.66f, 0.20f, 0.86f * burst};
+    const std::array<float, 4> smoke = alternatePalette
+        ? std::array<float, 4>{0.18f, 0.28f, 0.38f, 0.28f * burst}
+        : std::array<float, 4>{0.30f, 0.24f, 0.18f, 0.30f * burst};
+    glUniform4f(lineUniforms.color, smoke[0], smoke[1], smoke[2], smoke[3]);
+    glLineWidth(8.0f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glUniform4f(lineUniforms.color, hot[0], hot[1], hot[2], hot[3]);
+    glLineWidth(3.2f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
 void drawAtmosphericStreaks(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 camera, Vec3 look, float time, WorldTheme theme) {
     std::vector<float> data;
     data.reserve(3 * 96);
@@ -4647,6 +4709,7 @@ int main() {
             const Vec3 activeEye = watchingPlayerTwo ? eyeTwoForFire : eye;
             const Vec3 activeLook = watchingPlayerTwo ? lookTwoForFire : look;
             const float activeUpSign = watchingPlayerTwo ? playerTwo.upSign : player.upSign;
+            const float activeShotgunFlash = watchingPlayerTwo ? playerTwo.shotgunFlashTimer : player.shotgunFlashTimer;
             const float activeMiningProgress = watchingPlayerTwo ? 0.0f : currentMiningProgress();
             const Vec3 activeRenderEye = activeEye + miningCameraOffset(activeLook, activeUpSign, activeMiningProgress, watchingPlayerTwo ? 0.0f : miningImpactTimer, renderTime);
             const Mat4 projSingle = perspective(68.0f * Pi / 180.0f, static_cast<float>(width) / static_cast<float>(height), 0.05f, 140.0f);
@@ -4672,6 +4735,7 @@ int main() {
             drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpSingle, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight, {0.15f, 0.55f, 1.0f, 0.42f});
             drawRocketFlame(lineUniform, lineVao, lineVbo, vpSingle, rocket, renderTime);
             drawRocketFlame(lineUniform, lineVao, lineVbo, vpSingle, rocketTwo, renderTime);
+            drawShotgunMuzzleParticles(lineUniform, lineVao, lineVbo, vpSingle, activeRenderEye, activeLook, activeUpSign, activeShotgunFlash, renderTime, watchingPlayerTwo);
             drawBlast(lineUniform, lineVao, lineVbo, vpSingle, blast);
             drawBlast(lineUniform, lineVao, lineVbo, vpSingle, blastTwo);
             glDisable(GL_BLEND);
@@ -4747,6 +4811,7 @@ int main() {
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight, {0.86f, 0.18f, 0.08f, 0.36f});
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocket, renderTime);
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocketTwo, renderTime);
+        drawShotgunMuzzleParticles(lineUniform, lineVao, lineVbo, vp, eyeRender, look, player.upSign, player.shotgunFlashTimer, renderTime);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blastTwo);
         glDisable(GL_BLEND);
@@ -4808,6 +4873,7 @@ int main() {
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight, {0.15f, 0.55f, 1.0f, 0.42f});
         drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocket, renderTime);
         drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocketTwo, renderTime);
+        drawShotgunMuzzleParticles(lineUniform, lineVao, lineVbo, vpTwo, eyeTwo, lookTwo, playerTwo.upSign, playerTwo.shotgunFlashTimer, renderTime, true);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blastTwo);
         glDisable(GL_BLEND);
