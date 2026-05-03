@@ -54,6 +54,9 @@ using GLsizeiptr = ptrdiff_t;
 #define GL_TEXTURE_WRAP_S 0x2802
 #define GL_TEXTURE_WRAP_T 0x2803
 #endif
+#ifndef GL_MULTISAMPLE
+#define GL_MULTISAMPLE 0x809D
+#endif
 
 using PFNGLACTIVETEXTUREPROC = void (APIENTRY*)(GLenum);
 using PFNGLATTACHSHADERPROC = void (APIENTRY*)(GLuint, GLuint);
@@ -3307,8 +3310,10 @@ void main() {
 
     float sun = max(dot(n, normalize(-uSunDir)), 0.0);
     float sky = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
-    float rim = pow(max(1.0 - dot(normalize(uCamera - vWorldPos), n), 0.0), 2.0) * 0.08;
-    vec3 light = vec3(0.12, 0.12, 0.13) + vec3(0.50, 0.51, 0.50) * sun * 0.42 + vec3(0.16, 0.17, 0.18) * sky * 0.18 + rim;
+    vec3 viewDir = normalize(uCamera - vWorldPos);
+    vec3 sunDir = normalize(-uSunDir);
+    float rim = pow(max(1.0 - dot(viewDir, n), 0.0), 2.0) * 0.12;
+    vec3 light = vec3(0.13, 0.13, 0.14) + vec3(0.56, 0.55, 0.52) * sun * 0.48 + vec3(0.18, 0.19, 0.20) * sky * 0.22 + rim;
     light += vec3(0.18, 0.20, 0.19) * uFeedClarity;
     vec3 toPoint = vWorldPos - uCamera;
     float lampDistance = length(toPoint);
@@ -3320,6 +3325,13 @@ void main() {
     vec3 headlamp = vec3(0.92, 0.94, 0.86) * (cone * 11.60 + spill * 8.0) * facing * falloff;
     light += headlamp;
     vec3 color = pow(base * light * faceAO, vec3(0.95));
+    float polished = (kind == 7.0 || kind == 9.0 || kind == 10.0 || kind == 11.0 || kind == 22.0) ? 1.0 : 0.0;
+    float hardSurface = (kind == 3.0 || kind == 19.0 || kind == 20.0 || kind == 21.0) ? 1.0 : 0.0;
+    vec3 halfSun = normalize(sunDir + viewDir);
+    vec3 halfLamp = normalize(-lampRay + viewDir);
+    float sunSpec = pow(max(dot(n, halfSun), 0.0), mix(18.0, 56.0, polished)) * (0.08 + polished * 0.28 + hardSurface * 0.08);
+    float lampSpec = pow(max(dot(n, halfLamp), 0.0), mix(16.0, 64.0, polished)) * cone * falloff * (0.34 + polished * 1.15);
+    color += vec3(0.95, 0.92, 0.82) * sunSpec + vec3(0.84, 0.92, 1.0) * lampSpec;
     if (kind == 10.0) color += base * 1.15 + vec3(0.0, 0.35, 0.55) * edge;
     if (kind == 11.0) color += base * 0.95 + vec3(0.45, 0.55, 0.0) * edge;
     float distanceToEye = length(uCamera - vWorldPos);
@@ -3334,6 +3346,7 @@ void main() {
     if (kind == 10.0) color = mix(color, vec3(0.00, 0.92, 1.0), 0.34);
     if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.30);
     color = mix(color, pow(color * 1.55, vec3(0.88)), uFeedClarity);
+    color = pow(max(color * 1.08 + vec3(0.012), vec3(0.0)), vec3(0.92));
     FragColor = vec4(color, alpha);
 }
 )GLSL";
@@ -3644,7 +3657,11 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#if defined(_WIN32)
+    glfwWindowHint(GLFW_SAMPLES, 4);
+#else
     glfwWindowHint(GLFW_SAMPLES, 0);
+#endif
 
     int windowWidth = 1280;
     int windowHeight = 800;
@@ -3676,6 +3693,9 @@ int main() {
     }
     glfwSwapInterval(1);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+#if defined(_WIN32)
+    glEnable(GL_MULTISAMPLE);
+#endif
 
     World world;
     world.seed = randomPlanetSeed();
