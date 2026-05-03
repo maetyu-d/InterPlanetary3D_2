@@ -1,6 +1,6 @@
 # Dead Cube World
 
-A bleak C++ voxel sandbox inspired by Minecraft, rendered with GLFW and modern OpenGL. The world is a six-faced cube planet under a low burning sky, with monochrome terrain, heavy ash fog, rare electric-blue fuel seams, toxic-yellow plutonium pockets, a dying scorched sun, and an orbiting satellite with a live downward camera feed.
+A bleak voxel-based, local 2 player duel inspired by Minecraft, but also WWI trench warefare, drone warfare in Ukraine, British government leafleting on domestic atomic bomb shelters, and the opening sequence of David Lynch's Eraserhead, all rendered with GLFW and modern OpenGL. The world is a six-faced cube planet under a low burning sky, with monochrome terrain, heavy ash fog, rare electric-blue fuel seams, toxic-yellow plutonium pockets, a dying scorched sun, and an orbiting satellite with a live downward camera feed.
 
 ## Build and Run
 
