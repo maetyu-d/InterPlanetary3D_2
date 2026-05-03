@@ -2424,7 +2424,7 @@ void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool minin
             const float s = 0.003f + impact * 0.004f;
             addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {0.50f, 0.44f, 0.34f, impact * 0.34f});
         }
-        for (int i = 0; i < 18; ++i) {
+        for (int i = 0; i < 30; ++i) {
             const float a = static_cast<float>(i) * 0.349066f + time * 5.6f;
             const float r = 0.058f + impact * (0.080f + 0.012f * static_cast<float>(i % 3));
             const float w = 0.018f + impact * 0.038f;
@@ -2447,10 +2447,18 @@ void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool minin
             const float s = 0.0028f + bite * 0.0045f;
             addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {1.0f, 0.52f, 0.09f, bite * 0.55f});
         }
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 16; ++i) {
             const float a = static_cast<float>(i) * 0.905f + time * 1.4f;
             const float r = 0.046f + bite * (0.082f + 0.012f * static_cast<float>(i % 2));
             addUiRectRotated(vertices, {0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r}, a + bite, -0.016f, -0.002f, 0.032f + bite * 0.024f, 0.004f, {1.0f, 0.76f, 0.22f, bite * 0.36f});
+        }
+        const float slap = std::clamp((bite - 0.82f) / 0.18f, 0.0f, 1.0f);
+        if (slap > 0.0f) {
+            for (int i = 0; i < 10; ++i) {
+                const float a = static_cast<float>(i) * 0.628318f + time * 3.0f;
+                const float r = 0.030f + slap * (0.075f + 0.008f * static_cast<float>(i % 3));
+                addUiRectRotated(vertices, {0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r}, a, -0.018f, -0.0025f, 0.036f, 0.005f, {1.0f, 0.88f, 0.38f, slap * 0.30f});
+            }
         }
     }
     glUseProgram(uiProgram);
@@ -2868,6 +2876,67 @@ void drawSelection(const LineUniforms& lineUniforms, GLuint lineVao, GLuint line
         glLineWidth(7.0f + progressPulse * 5.0f);
         glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     }
+    glLineWidth(1.0f);
+}
+
+Vec3 miningCameraOffset(Vec3 look, float upSign, float progress, float impact, float time) {
+    progress = std::clamp(progress, 0.0f, 1.0f);
+    impact = std::clamp(impact, 0.0f, 1.0f);
+    const Vec3 forward = normalize(look);
+    Vec3 right = normalize(cross(forward, {0.0f, upSign, 0.0f}));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    const Vec3 up{0.0f, upSign, 0.0f};
+    const float bite = std::pow(progress, 1.55f);
+    const float chatter = std::sin(time * 86.0f) * std::sin(time * 47.0f);
+    return right * (chatter * bite * 0.010f + impact * 0.026f)
+        + up * ((std::sin(time * 72.0f) * bite * 0.006f) - impact * 0.018f)
+        - forward * (bite * 0.012f + impact * 0.030f);
+}
+
+void drawMiningDebris(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 hit, Vec3 previous, float progress, float impact, float time) {
+    progress = std::clamp(progress, 0.0f, 1.0f);
+    impact = std::clamp(impact, 0.0f, 1.0f);
+    const float energy = std::clamp(std::pow(progress, 1.25f) * 0.72f + impact * 1.15f, 0.0f, 1.0f);
+    if (energy <= 0.01f) return;
+
+    Vec3 normal{
+        std::clamp(previous.x - hit.x, -1.0f, 1.0f),
+        std::clamp(previous.y - hit.y, -1.0f, 1.0f),
+        std::clamp(previous.z - hit.z, -1.0f, 1.0f)
+    };
+    if (length(normal) < 0.1f) normal = {0.0f, 1.0f, 0.0f};
+    normal = normalize(normal);
+    Vec3 helper = std::abs(normal.y) < 0.82f ? Vec3{0.0f, 1.0f, 0.0f} : Vec3{1.0f, 0.0f, 0.0f};
+    Vec3 tangent = normalize(cross(helper, normal));
+    Vec3 bitangent = normalize(cross(normal, tangent));
+    const Vec3 center = hit + Vec3{0.5f, 0.5f, 0.5f} + normal * 0.535f;
+
+    std::vector<float> data;
+    data.reserve(3 * 96);
+    auto addLine = [&data](Vec3 a, Vec3 b) {
+        data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
+        data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
+    };
+    const int count = 18 + static_cast<int>(energy * 22.0f);
+    for (int i = 0; i < count; ++i) {
+        const float seed = static_cast<float>(i);
+        const float a = seed * 2.39996f + time * (2.2f + energy * 4.8f);
+        const float side = std::sin(seed * 8.31f + time) * 0.34f;
+        const float lift = std::cos(seed * 5.77f - time * 0.7f) * 0.34f;
+        const float burst = 0.08f + energy * (0.18f + 0.15f * std::fmod(std::abs(std::sin(seed * 4.11f)), 1.0f));
+        const Vec3 start = center + tangent * side + bitangent * lift;
+        const Vec3 dir = normalize(normal * (0.60f + energy) + tangent * std::cos(a) * 0.55f + bitangent * std::sin(a) * 0.55f);
+        addLine(start, start + dir * burst);
+    }
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    glUniform4f(lineUniforms.color, 1.0f, 0.58f + energy * 0.24f, 0.16f, 0.20f + energy * 0.46f);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(1.7f + energy * 2.4f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
 
@@ -4229,6 +4298,11 @@ int main() {
         static bool wasShotgunFireDown = false;
         const bool playerMissileMode = playerToolMode == ToolMode::Missile || playerToolMode == ToolMode::AtomicMissile;
         const bool playerShotgunMode = playerToolMode == ToolMode::Shotgun;
+        auto currentMiningProgress = [&]() {
+            if (!hasHit || !leftDown || playerMissileMode || playerShotgunMode || !sameBlockCell(miningTarget, hit)) return 0.0f;
+            const Block targetBlock = world.get(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z));
+            return std::clamp(miningTimer / std::max(0.001f, mineDuration(targetBlock)), 0.0f, 1.0f);
+        };
         const bool rocketFirePressed = p1CanAttack && playerMissileMode && playerPrimaryFireDown && !wasRocketFireDown;
         wasRocketFireDown = p1CanAttack && playerMissileMode && playerPrimaryFireDown;
         const bool shotgunFirePressed = p1CanAttack && playerShotgunMode && playerPrimaryFireDown && !wasShotgunFireDown;
@@ -4500,8 +4574,10 @@ int main() {
             const Vec3 activeEye = watchingPlayerTwo ? eyeTwoForFire : eye;
             const Vec3 activeLook = watchingPlayerTwo ? lookTwoForFire : look;
             const float activeUpSign = watchingPlayerTwo ? playerTwo.upSign : player.upSign;
+            const float activeMiningProgress = watchingPlayerTwo ? 0.0f : currentMiningProgress();
+            const Vec3 activeRenderEye = activeEye + miningCameraOffset(activeLook, activeUpSign, activeMiningProgress, watchingPlayerTwo ? 0.0f : miningImpactTimer, renderTime);
             const Mat4 projSingle = perspective(68.0f * Pi / 180.0f, static_cast<float>(width) / static_cast<float>(height), 0.05f, 140.0f);
-            const Mat4 viewSingle = lookAt(activeEye, activeEye + activeLook, {0.0f, activeUpSign, 0.0f});
+            const Mat4 viewSingle = lookAt(activeRenderEye, activeRenderEye + activeLook, {0.0f, activeUpSign, 0.0f});
             const Mat4 vpSingle = multiply(projSingle, viewSingle);
             const Rocket& visibleRocket = rocket.active ? rocket : rocketTwo;
 
@@ -4514,11 +4590,11 @@ int main() {
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glEnable(GL_DEPTH_TEST);
 
-            drawVoxelScene(voxelUniform, vpSingle, opaque, transparentMesh, watchingPlayerTwo ? &satelliteMesh : &satelliteMesh, watchingPlayerTwo ? satellitePositionTwo : satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, activeEye, activeLook, renderTime);
+            drawVoxelScene(voxelUniform, vpSingle, opaque, transparentMesh, watchingPlayerTwo ? &satelliteMesh : &satelliteMesh, watchingPlayerTwo ? satellitePositionTwo : satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, activeRenderEye, activeLook, renderTime);
             if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vpSingle, renderTime);
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            drawAtmosphericStreaks(lineUniform, lineVao, lineVbo, vpSingle, activeEye, activeLook, renderTime, world.theme);
+            drawAtmosphericStreaks(lineUniform, lineVao, lineVbo, vpSingle, activeRenderEye, activeLook, renderTime, world.theme);
             drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpSingle, renderTime, satelliteOrbit, satelliteOrbitHeight, {0.86f, 0.18f, 0.08f, 0.36f});
             drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpSingle, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight, {0.15f, 0.55f, 1.0f, 0.42f});
             drawRocketFlame(lineUniform, lineVao, lineVbo, vpSingle, rocket, renderTime);
@@ -4538,6 +4614,7 @@ int main() {
                     interactionProgress = std::clamp(miningTimer / mineDuration(targetBlock), 0.0f, 1.0f);
                 }
                 drawSelection(lineUniform, lineVao, lineVbo, vpSingle, hit, previous, interactionProgress, showingBuild, renderTime);
+                if (!showingBuild && leftDown && sameBlockCell(miningTarget, hit)) drawMiningDebris(lineUniform, lineVao, lineVbo, vpSingle, hit, previous, interactionProgress, miningImpactTimer, renderTime);
             }
 
             glDisable(GL_DEPTH_TEST);
@@ -4583,15 +4660,17 @@ int main() {
         glEnable(GL_DEPTH_TEST);
 
         const Mat4 proj = perspective(68.0f * Pi / 180.0f, static_cast<float>(leftWidth) / static_cast<float>(height), 0.05f, 140.0f);
-        const Mat4 view = lookAt(eye, eye + look, {0.0f, player.upSign, 0.0f});
+        const float renderMiningProgress = currentMiningProgress();
+        const Vec3 eyeRender = eye + miningCameraOffset(look, player.upSign, renderMiningProgress, miningImpactTimer, renderTime);
+        const Mat4 view = lookAt(eyeRender, eyeRender + look, {0.0f, player.upSign, 0.0f});
         const Mat4 vp = multiply(proj, view);
 
         const Rocket& visibleRocket = rocket.active ? rocket : rocketTwo;
-        drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eye, look, renderTime);
+        drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eyeRender, look, renderTime);
         if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vp, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawAtmosphericStreaks(lineUniform, lineVao, lineVbo, vp, eye, look, renderTime, world.theme);
+        drawAtmosphericStreaks(lineUniform, lineVao, lineVbo, vp, eyeRender, look, renderTime, world.theme);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight, {0.86f, 0.18f, 0.08f, 0.36f});
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocket, renderTime);
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocketTwo, renderTime);
@@ -4612,6 +4691,7 @@ int main() {
                 showingMine = true;
             }
             drawSelection(lineUniform, lineVao, lineVbo, vp, hit, previous, interactionProgress, showingBuild, renderTime);
+            if (showingMine) drawMiningDebris(lineUniform, lineVao, lineVbo, vp, hit, previous, interactionProgress, miningImpactTimer, renderTime);
         }
 
         glDisable(GL_DEPTH_TEST);
