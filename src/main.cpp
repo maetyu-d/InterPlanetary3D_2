@@ -202,6 +202,21 @@ enum class ToolMode {
     AtomicMissile
 };
 
+enum class GameType {
+    FirstToThree,
+    PhasedTurns,
+    AlternatingHunter
+};
+
+struct MatchState {
+    GameType type = GameType::FirstToThree;
+    double startedAt = 0.0;
+    bool suddenDeath = false;
+    bool over = false;
+    int winner = 0;
+    int firstHunter = 1;
+};
+
 struct Vertex {
     Vec3 position;
     Vec3 normal;
@@ -548,6 +563,39 @@ const char* toolModeName(ToolMode mode) {
     return "mine/build";
 }
 
+GameType nextGameType(GameType type) {
+    switch (type) {
+        case GameType::FirstToThree: return GameType::PhasedTurns;
+        case GameType::PhasedTurns: return GameType::AlternatingHunter;
+        case GameType::AlternatingHunter: return GameType::FirstToThree;
+    }
+    return GameType::FirstToThree;
+}
+
+const char* gameTypeName(GameType type) {
+    switch (type) {
+        case GameType::FirstToThree: return "first to 3";
+        case GameType::PhasedTurns: return "10-turn phases";
+        case GameType::AlternatingHunter: return "alternating hunter";
+    }
+    return "first to 3";
+}
+
+const char* turnPhaseName(const MatchState& match, double now) {
+    if (match.over) return match.winner == 1 ? "P1 wins" : "P2 wins";
+    if (match.suddenDeath) return "sudden death";
+    if (match.type == GameType::PhasedTurns) {
+        const int turn = std::clamp(static_cast<int>((now - match.startedAt) / 60.0), 0, 9);
+        return (turn % 2) == 0 ? "build/mine" : "attack/hide";
+    }
+    if (match.type == GameType::AlternatingHunter) {
+        const int turn = std::max(0, static_cast<int>((now - match.startedAt) / 60.0));
+        const int active = (turn % 2) == 0 ? match.firstHunter : 3 - match.firstHunter;
+        return active == 1 ? "P1 hunts" : "P2 hunts";
+    }
+    return "duel";
+}
+
 float buildDuration(BuildType type) {
     return type == BuildType::Normal ? NormalBuildTime : HardBuildTime;
 }
@@ -838,14 +886,6 @@ void addBrutalistTower(World& world, int face, int centerU, int centerV) {
                 if (!world.inBounds(cell.x, cell.y, cell.z)) continue;
                 const bool windowBand = edge && h > 2 && (h % 3 == 1) && ((du + dv + featureFace) & 1) == 0;
                 world.set(cell.x, cell.y, cell.z, windowBand ? Block::WindowGlass : (edge ? Block::Concrete : Block::DarkConcrete));
-            }
-        }
-    }
-    for (int dv = -widthV - 1; dv <= widthV + 1; ++dv) {
-        for (int du = -widthU - 1; du <= widthU + 1; ++du) {
-            Cell roof = addCell(addCell(addCell(surface, normal, height + 1), tangentU, du), tangentV, dv);
-            if (world.inBounds(roof.x, roof.y, roof.z) && world.get(roof.x, roof.y, roof.z) == Block::Air) {
-                world.set(roof.x, roof.y, roof.z, Block::DarkConcrete);
             }
         }
     }
@@ -1338,7 +1378,7 @@ Vec3 rotateAroundAxis(Vec3 v, Vec3 axis, float angle) {
     return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
 }
 
-void updatePlayer(const World& world, Player& player, float dt, float forcefieldY, bool allowLook = true) {
+void updatePlayer(const World& world, Player& player, float dt, float forcefieldY, bool allowLook = true, bool allowMove = true) {
     if (allowLook) {
         player.lookVelocityX = player.lookVelocityX * 0.42f + pendingMouseLook.x * 0.58f;
         player.lookVelocityY = player.lookVelocityY * 0.42f + pendingMouseLook.y * 0.58f;
@@ -1349,6 +1389,15 @@ void updatePlayer(const World& world, Player& player, float dt, float forcefield
     } else {
         player.lookVelocityX = 0.0f;
         player.lookVelocityY = 0.0f;
+    }
+
+    if (!allowMove) {
+        player.velocity = {};
+        player.jumpWasDown = false;
+        player.jumpBufferTimer = 0.0f;
+        player.coyoteTimer = 0.0f;
+        pendingMouseLook = {};
+        return;
     }
 
     Vec3 forward = normalize(forwardFromAngles(player.yaw, 0.0f));
@@ -1405,7 +1454,15 @@ void updatePlayer(const World& world, Player& player, float dt, float forcefield
     }
 }
 
-void updatePlayerTwo(const World& world, Player& player, float dt, float forcefieldY) {
+void updatePlayerTwo(const World& world, Player& player, float dt, float forcefieldY, bool allowInput = true) {
+    if (!allowInput) {
+        player.velocity = {};
+        player.jumpWasDown = false;
+        player.jumpBufferTimer = 0.0f;
+        player.coyoteTimer = 0.0f;
+        return;
+    }
+
     const float lookSpeed = 1.9f * dt;
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) player.yaw += lookSpeed;
     if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) player.yaw -= lookSpeed;
@@ -2975,6 +3032,31 @@ int main() {
     Rocket rocketTwo;
     Blast blast;
     Blast blastTwo;
+    MatchState match;
+    match.startedAt = lastTime;
+    match.firstHunter = (world.seed & 1) ? 1 : 2;
+    auto resetMatch = [&](double now) {
+        player.score = 0;
+        playerTwo.score = 0;
+        respawnPlayer(world, player);
+        respawnPlayer(world, playerTwo, true);
+        player.health = 100;
+        playerTwo.health = 100;
+        player.fuel = 3;
+        player.plutonium = 3;
+        playerTwo.fuel = 3;
+        playerTwo.plutonium = 3;
+        match.startedAt = now;
+        match.suddenDeath = false;
+        match.over = false;
+        match.winner = 0;
+        match.firstHunter = ((world.seed + static_cast<int>(now * 10.0)) & 1) ? 1 : 2;
+        rocket.active = false;
+        rocketTwo.active = false;
+        blast.active = false;
+        blastTwo.active = false;
+        satelliteFeedDirty = true;
+    };
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -2993,6 +3075,10 @@ int main() {
         }
         if (keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
         if (keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
+        if (keyPressed(GLFW_KEY_G)) {
+            match.type = nextGameType(match.type);
+            resetMatch(now);
+        }
         if (keyPressed(GLFW_KEY_T)) {
             world.theme = nextTheme(world.theme);
             world.seed += 7331;
@@ -3000,13 +3086,7 @@ int main() {
             rebuildMeshes(world, opaque, transparentMesh);
             forcefieldY = forcefieldPlaneY(world);
             rebuildForcefieldMesh(world, forcefieldMesh);
-            respawnPlayer(world, player);
-            respawnPlayer(world, playerTwo, true);
-            rocket.active = false;
-            rocketTwo.active = false;
-            blast.active = false;
-            blastTwo.active = false;
-            satelliteFeedDirty = true;
+            resetMatch(now);
         }
         if (keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode);
         if (keyPressed(GLFW_KEY_P)) playerTwoToolMode = nextToolMode(playerTwoToolMode);
@@ -3028,21 +3108,53 @@ int main() {
             rebuildMeshes(world, opaque, transparentMesh);
             forcefieldY = forcefieldPlaneY(world);
             rebuildForcefieldMesh(world, forcefieldMesh);
-            respawnPlayer(world, player);
-            respawnPlayer(world, playerTwo, true);
-            rocket.active = false;
-            rocketTwo.active = false;
-            blast.active = false;
-            blastTwo.active = false;
-            satelliteFeedDirty = true;
+            resetMatch(now);
         }
 
         satelliteOrbitHeight += (targetSatelliteOrbitHeight - satelliteOrbitHeight) * std::min(1.0f, dt * 2.4f);
         if (std::abs(targetSatelliteOrbitHeight - satelliteOrbitHeight) > 0.05f) satelliteFeedDirty = true;
 
+        const double matchElapsed = now - match.startedAt;
+        if (!match.over && !match.suddenDeath) {
+            if (match.type == GameType::FirstToThree && matchElapsed >= 600.0 && player.score < 3 && playerTwo.score < 3) {
+                match.suddenDeath = true;
+                player.health = 1;
+                playerTwo.health = 1;
+            } else if (match.type == GameType::PhasedTurns && matchElapsed >= 600.0) {
+                if (player.score != playerTwo.score) {
+                    match.over = true;
+                    match.winner = player.score > playerTwo.score ? 1 : 2;
+                } else {
+                    match.suddenDeath = true;
+                    player.health = 1;
+                    playerTwo.health = 1;
+                }
+            }
+        }
+        if (!match.over && match.suddenDeath) {
+            player.health = std::min(player.health, 1);
+            playerTwo.health = std::min(playerTwo.health, 1);
+        }
+
+        int activeHunter = 0;
+        if (match.type == GameType::AlternatingHunter) {
+            const int turn = std::max(0, static_cast<int>(matchElapsed / 60.0));
+            activeHunter = (turn % 2) == 0 ? match.firstHunter : 3 - match.firstHunter;
+        }
+        const bool phasedBuildTurn = match.type == GameType::PhasedTurns && !match.suddenDeath && !match.over
+            && (std::clamp(static_cast<int>(matchElapsed / 60.0), 0, 9) % 2) == 0;
+        const bool phasedAttackTurn = match.type == GameType::PhasedTurns && !match.suddenDeath && !match.over && !phasedBuildTurn;
+        const bool p1CanAct = !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 1);
+        const bool p2CanAct = !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 2);
+        const bool p1CanMove = p1CanAct;
+        const bool p2CanMove = p2CanAct;
+        const bool p1CanMineBuild = p1CanAct && (match.type != GameType::PhasedTurns || match.suddenDeath || phasedBuildTurn);
+        const bool p1CanAttack = p1CanAct && (match.type != GameType::PhasedTurns || match.suddenDeath || phasedAttackTurn);
+        const bool p2CanAttack = p2CanAct && (match.type != GameType::PhasedTurns || match.suddenDeath || phasedAttackTurn);
+
         const bool missileGuided = rocket.active && rocket.age >= 1.0f;
-        updatePlayer(world, player, dt, forcefieldY, !missileGuided);
-        updatePlayerTwo(world, playerTwo, dt, forcefieldY);
+        updatePlayer(world, player, dt, forcefieldY, p1CanMove && !missileGuided, p1CanMove);
+        updatePlayerTwo(world, playerTwo, dt, forcefieldY, p2CanMove);
         const Vec3 eye{player.position.x, player.position.y + player.upSign * PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
         const Vec3 satellitePosition = satellitePositionAt(world, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
@@ -3055,14 +3167,16 @@ int main() {
         const bool rightDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         static bool wasRocketFireDown = false;
         const bool playerMissileMode = playerToolMode == ToolMode::Missile || playerToolMode == ToolMode::AtomicMissile;
-        const bool rocketFirePressed = playerMissileMode && leftDown && !wasRocketFireDown;
-        wasRocketFireDown = playerMissileMode && leftDown;
+        const bool rocketFirePressed = p1CanAttack && playerMissileMode && leftDown && !wasRocketFireDown;
+        wasRocketFireDown = p1CanAttack && playerMissileMode && leftDown;
         player.rocketCooldown = std::max(0.0f, player.rocketCooldown - dt);
         playerTwo.rocketCooldown = std::max(0.0f, playerTwo.rocketCooldown - dt);
         player.hurtTimer = std::max(0.0f, player.hurtTimer - dt);
         playerTwo.hurtTimer = std::max(0.0f, playerTwo.hurtTimer - dt);
         toolHitCooldown = std::max(0.0f, toolHitCooldown - dt);
         toolHitCooldownTwo = std::max(0.0f, toolHitCooldownTwo - dt);
+        const int scoreBeforeCombatOne = player.score;
+        const int scoreBeforeCombatTwo = playerTwo.score;
         const bool playerAtomic = playerToolMode == ToolMode::AtomicMissile;
         if (rocketFirePressed && !rocket.active && canFireRocket(player, playerAtomic) && player.rocketCooldown <= 0.0f) {
             spendRocketResources(player, playerAtomic);
@@ -3073,8 +3187,8 @@ int main() {
         static bool wasPlayerTwoFireDown = false;
         const bool playerTwoMissileMode = playerTwoToolMode == ToolMode::Missile || playerTwoToolMode == ToolMode::AtomicMissile;
         const bool playerTwoFireDown = glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-        const bool playerTwoFirePressed = playerTwoMissileMode && playerTwoFireDown && !wasPlayerTwoFireDown;
-        wasPlayerTwoFireDown = playerTwoMissileMode && playerTwoFireDown;
+        const bool playerTwoFirePressed = p2CanAttack && playerTwoMissileMode && playerTwoFireDown && !wasPlayerTwoFireDown;
+        wasPlayerTwoFireDown = p2CanAttack && playerTwoMissileMode && playerTwoFireDown;
         const Vec3 eyeTwoForFire{playerTwo.position.x, playerTwo.position.y + playerTwo.upSign * PlayerHeight * 0.88f, playerTwo.position.z};
         const Vec3 lookTwoForFire = forwardFromAngles(playerTwo.yaw, playerTwo.pitch);
         const bool playerTwoAtomic = playerTwoToolMode == ToolMode::AtomicMissile;
@@ -3115,16 +3229,16 @@ int main() {
         const bool rocketBlocksTools = playerMissileMode || rocket.active;
 
         buildCooldown = std::max(0.0f, buildCooldown - dt);
-        if (!rocketBlocksTools && mouseCaptured && (leftDown || rightDown) && toolHitCooldown <= 0.0f && rayHitsPlayer(eye, look, playerTwo, 4.0f)) {
+        if (p1CanAttack && !rocketBlocksTools && mouseCaptured && (leftDown || rightDown) && toolHitCooldown <= 0.0f && rayHitsPlayer(eye, look, playerTwo, 4.0f)) {
             applyToolDamage(world, playerTwo, true, player, rightDown ? 18 : 12);
             toolHitCooldown = 0.42f;
         }
         const bool playerTwoToolSwing = playerTwoToolMode == ToolMode::MineBuild && glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-        if (playerTwoToolSwing && toolHitCooldownTwo <= 0.0f && rayHitsPlayer(eyeTwoForFire, lookTwoForFire, player, 4.0f)) {
+        if (p2CanAttack && playerTwoToolSwing && toolHitCooldownTwo <= 0.0f && rayHitsPlayer(eyeTwoForFire, lookTwoForFire, player, 4.0f)) {
             applyToolDamage(world, player, false, playerTwo, 12);
             toolHitCooldownTwo = 0.42f;
         }
-        if (!rocketBlocksTools && mouseCaptured && hasHit && leftDown) {
+        if (p1CanMineBuild && !rocketBlocksTools && mouseCaptured && hasHit && leftDown) {
             if (!sameBlockCell(miningTarget, hit)) {
                 miningTarget = hit;
                 miningTimer = 0.0f;
@@ -3144,7 +3258,7 @@ int main() {
             miningTarget = {-9999.0f, -9999.0f, -9999.0f};
         }
 
-        if (!rocketBlocksTools && mouseCaptured && hasHit && rightDown) {
+        if (p1CanMineBuild && !rocketBlocksTools && mouseCaptured && hasHit && rightDown) {
             const int x = static_cast<int>(previous.x);
             const int y = static_cast<int>(previous.y);
             const int z = static_cast<int>(previous.z);
@@ -3168,6 +3282,30 @@ int main() {
         } else {
             buildingTimer = 0.0f;
             buildingTarget = {-9999.0f, -9999.0f, -9999.0f};
+        }
+
+        if (!match.over && (player.score != scoreBeforeCombatOne || playerTwo.score != scoreBeforeCombatTwo)) {
+            if (match.type == GameType::FirstToThree) {
+                if (player.score >= 3 || (match.suddenDeath && player.score > scoreBeforeCombatOne)) {
+                    match.over = true;
+                    match.winner = 1;
+                } else if (playerTwo.score >= 3 || (match.suddenDeath && playerTwo.score > scoreBeforeCombatTwo)) {
+                    match.over = true;
+                    match.winner = 2;
+                }
+            } else if (match.type == GameType::PhasedTurns) {
+                if (match.suddenDeath) {
+                    match.over = true;
+                    match.winner = player.score > scoreBeforeCombatOne ? 1 : 2;
+                }
+            } else if (match.type == GameType::AlternatingHunter) {
+                match.over = true;
+                match.winner = player.score > scoreBeforeCombatOne ? 1 : 2;
+            }
+            if (match.over) {
+                rocket.active = false;
+                rocketTwo.active = false;
+            }
         }
 
         int width = 1;
@@ -3266,7 +3404,7 @@ int main() {
         float interactionProgress = 0.0f;
         bool showingBuild = false;
         bool showingMine = false;
-        if (!rocketBlocksTools && hasHit) {
+        if (p1CanMineBuild && !rocketBlocksTools && hasHit) {
             if (rightDown && sameBlockCell(buildingTarget, previous)) {
                 interactionProgress = std::clamp(buildingTimer / buildDuration(selectedBuild), 0.0f, 1.0f);
                 showingBuild = true;
@@ -3332,9 +3470,16 @@ int main() {
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
 
+        int modeSecondsRemaining = 0;
+        if (!match.over && !match.suddenDeath) {
+            if (match.type == GameType::FirstToThree) modeSecondsRemaining = std::max(0, 600 - static_cast<int>(matchElapsed));
+            else modeSecondsRemaining = std::max(0, 60 - static_cast<int>(static_cast<int>(matchElapsed) % 60));
+        }
         const std::string title = "Dead Cube World - " + std::string(themeName(world.theme)) + " - " + std::to_string(opaque.count / 6) + " faces - build: "
             + buildTypeName(selectedBuild) + " - sat: " + orbitName(satelliteOrbit)
             + " height " + std::to_string(static_cast<int>(targetSatelliteOrbitHeight))
+            + " - mode " + gameTypeName(match.type) + " " + turnPhaseName(match, now)
+            + (modeSecondsRemaining > 0 ? " " + std::to_string(modeSecondsRemaining) + "s" : "")
             + " - P1 " + std::to_string(player.health) + "hp F" + std::to_string(player.fuel) + "/P" + std::to_string(player.plutonium)
             + " P2 " + std::to_string(playerTwo.health) + "hp F" + std::to_string(playerTwo.fuel) + "/P" + std::to_string(playerTwo.plutonium)
             + " - tools " + toolModeName(playerToolMode) + "/" + toolModeName(playerTwoToolMode)
