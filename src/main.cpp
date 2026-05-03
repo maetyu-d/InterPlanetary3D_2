@@ -195,6 +195,7 @@ constexpr float JumpBufferTime = 0.13f;
 constexpr float NormalBuildTime = 0.28f;
 constexpr float HardBuildTime = 0.62f;
 constexpr std::size_t MaxUiVertices = 100000;
+constexpr std::size_t MaxLineVertices = 2048;
 constexpr const char* GameTitle = "InterPlanetary 3D";
 constexpr const char* GameTitleCaps = "INTERPLANETARY 3D";
 
@@ -2119,7 +2120,7 @@ GLuint makeLineVao(GLuint& vbo) {
     glGenBuffers(1, &vbo);
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 320, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * MaxLineVertices, nullptr, GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, nullptr);
     glBindVertexArray(0);
@@ -2411,7 +2412,7 @@ void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool minin
     const float bite = mining ? std::pow(progress, 1.35f) : 0.0f;
     const float pulse = 0.55f + 0.45f * std::sin(time * 42.0f);
     std::vector<UiVertex> vertices;
-    vertices.reserve(160);
+    vertices.reserve(320);
     if (impact > 0.0f) {
         addUiRect(vertices, 0.0f, 0.0f, 1.0f, 0.055f * impact, {0.020f, 0.018f, 0.014f, 0.22f * impact});
         addUiRect(vertices, 0.0f, 0.945f - 0.025f * impact, 1.0f, 0.080f * impact, {0.020f, 0.017f, 0.013f, 0.20f * impact});
@@ -2422,6 +2423,13 @@ void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool minin
             const float r = 0.050f + (1.0f - impact) * 0.050f + 0.010f * static_cast<float>(i % 4);
             const float s = 0.003f + impact * 0.004f;
             addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {0.50f, 0.44f, 0.34f, impact * 0.34f});
+        }
+        for (int i = 0; i < 18; ++i) {
+            const float a = static_cast<float>(i) * 0.349066f + time * 5.6f;
+            const float r = 0.058f + impact * (0.080f + 0.012f * static_cast<float>(i % 3));
+            const float w = 0.018f + impact * 0.038f;
+            const float h = 0.003f + impact * 0.004f;
+            addUiRectRotated(vertices, {0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r}, a, -w * 0.5f, -h * 0.5f, w, h, {0.92f, 0.58f, 0.18f, impact * 0.30f});
         }
     }
     if (mining) {
@@ -2438,6 +2446,11 @@ void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool minin
             const float r = 0.026f + bite * (0.052f + 0.007f * static_cast<float>(i % 4));
             const float s = 0.0028f + bite * 0.0045f;
             addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {1.0f, 0.52f, 0.09f, bite * 0.55f});
+        }
+        for (int i = 0; i < 8; ++i) {
+            const float a = static_cast<float>(i) * 0.905f + time * 1.4f;
+            const float r = 0.046f + bite * (0.082f + 0.012f * static_cast<float>(i % 2));
+            addUiRectRotated(vertices, {0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r}, a + bite, -0.016f, -0.002f, 0.032f + bite * 0.024f, 0.004f, {1.0f, 0.76f, 0.22f, bite * 0.36f});
         }
     }
     glUseProgram(uiProgram);
@@ -3063,6 +3076,45 @@ void drawRocketFlame(const LineUniforms& lineUniforms, GLuint lineVao, GLuint li
     if (rocket.atomic) glUniform4f(lineUniforms.color, 0.20f, 0.70f, 1.0f, 0.26f);
     else glUniform4f(lineUniforms.color, 1.0f, 0.18f, 0.02f, 0.28f);
     glLineWidth(rocket.atomic ? 10.0f : 7.0f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
+void drawAtmosphericStreaks(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, Vec3 camera, Vec3 look, float time, WorldTheme theme) {
+    std::vector<float> data;
+    data.reserve(3 * 96);
+    const Vec3 forward = normalize(look);
+    Vec3 right = normalize(cross(forward, {0.0f, 1.0f, 0.0f}));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    const Vec3 up = normalize(cross(right, forward));
+    auto addLine = [&data](Vec3 a, Vec3 b) {
+        data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
+        data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
+    };
+
+    for (int i = 0; i < 48; ++i) {
+        const float seed = static_cast<float>(i);
+        const float phase = std::fmod(time * (0.10f + 0.012f * static_cast<float>(i % 5)) + std::sin(seed * 12.9898f) * 437.58f, 1.0f);
+        const float side = std::sin(seed * 7.17f) * 18.0f;
+        const float lift = (std::cos(seed * 5.31f) * 0.5f + 0.5f) * 12.0f - 4.0f;
+        const float depth = 8.0f + std::fmod(std::abs(std::sin(seed * 2.73f)) * 37.0f, 30.0f);
+        const Vec3 base = camera + forward * depth + right * side + up * (lift - phase * 9.0f);
+        const float len = 0.34f + std::fmod(std::abs(std::cos(seed * 9.41f)) * 1.7f, 1.2f);
+        addLine(base, base - up * len + right * (0.03f * std::sin(time * 2.0f + seed)));
+    }
+
+    std::array<float, 4> color{0.46f, 0.44f, 0.38f, 0.20f};
+    if (theme == WorldTheme::Desert) color = {0.95f, 0.58f, 0.22f, 0.24f};
+    else if (theme == WorldTheme::Lush) color = {0.50f, 0.78f, 0.58f, 0.18f};
+    else if (theme == WorldTheme::Brutalist) color = {0.72f, 0.78f, 0.70f, 0.18f};
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    glUniform4f(lineUniforms.color, color[0], color[1], color[2], color[3]);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(1.4f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -4466,6 +4518,7 @@ int main() {
             if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vpSingle, renderTime);
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            drawAtmosphericStreaks(lineUniform, lineVao, lineVbo, vpSingle, activeEye, activeLook, renderTime, world.theme);
             drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpSingle, renderTime, satelliteOrbit, satelliteOrbitHeight, {0.86f, 0.18f, 0.08f, 0.36f});
             drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpSingle, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight, {0.15f, 0.55f, 1.0f, 0.42f});
             drawRocketFlame(lineUniform, lineVao, lineVbo, vpSingle, rocket, renderTime);
@@ -4538,6 +4591,7 @@ int main() {
         if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vp, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        drawAtmosphericStreaks(lineUniform, lineVao, lineVbo, vp, eye, look, renderTime, world.theme);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight, {0.86f, 0.18f, 0.08f, 0.36f});
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocket, renderTime);
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocketTwo, renderTime);
@@ -4597,6 +4651,7 @@ int main() {
         if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vpTwo, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        drawAtmosphericStreaks(lineUniform, lineVao, lineVbo, vpTwo, eyeTwo, lookTwo, renderTime + 1.7f, world.theme);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight, {0.15f, 0.55f, 1.0f, 0.42f});
         drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocket, renderTime);
         drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocketTwo, renderTime);
