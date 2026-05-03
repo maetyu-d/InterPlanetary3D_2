@@ -1871,7 +1871,7 @@ void updateRocket(const World& world, Rocket& rocket, Blast& blast, float dt, bo
 void updateBlast(Blast& blast, float dt) {
     if (!blast.active) return;
     blast.age += dt;
-    if (blast.age > (blast.atomic ? 1.9f : 1.35f)) blast.active = false;
+    if (blast.age > (blast.atomic ? 2.8f : 1.35f)) blast.active = false;
 }
 
 bool destroyBlocksInBlast(World& world, Vec3 center, float radius) {
@@ -2281,7 +2281,7 @@ void addUiTextCentered(std::vector<UiVertex>& vertices, float centerX, float y, 
     addUiText(vertices, centerX - uiTextWidth(size, text) * 0.5f, y, size, text, color);
 }
 
-void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool shotgun, bool rocketLauncher, float progress, float time, bool alternatePalette = false, float impact = 0.0f) {
+void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool shotgun, bool rocketLauncher, float progress, float time, bool atomicLauncher = false, bool alternatePalette = false, float impact = 0.0f) {
     const float action = (mining || building || shotgun || rocketLauncher) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
     impact = std::clamp(impact, 0.0f, 1.0f);
     const float idle = std::sin(time * 1.7f) * 0.006f;
@@ -2298,15 +2298,22 @@ void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool bu
         const Vec2 aim{muzzle.x - tail.x, muzzle.y - tail.y};
         const float launcherAngle = std::atan2(aim.y, aim.x);
         const float launcherLength = std::sqrt(aim.x * aim.x + aim.y * aim.y);
-        const std::array<float, 4> launcherBody = alternatePalette ? std::array<float, 4>{0.050f, 0.075f, 0.105f, 1.0f} : std::array<float, 4>{0.055f, 0.064f, 0.060f, 1.0f};
-        const std::array<float, 4> launcherBand = alternatePalette ? std::array<float, 4>{0.72f, 0.86f, 0.08f, 1.0f} : std::array<float, 4>{0.42f, 0.12f, 0.055f, 1.0f};
-        const std::array<float, 4> launcherTip = alternatePalette ? std::array<float, 4>{0.12f, 0.64f, 1.0f, 1.0f} : std::array<float, 4>{0.70f, 0.18f, 0.06f, 1.0f};
-        addUiRectRotated(vertices, tail, launcherAngle, 0.000f, -0.034f, launcherLength, 0.068f, launcherBody);
-        addUiRectRotated(vertices, tail, launcherAngle, -0.020f, -0.052f, 0.075f, 0.104f, {0.18f, 0.20f, 0.18f, 1.0f});
-        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.046f, -0.060f, 0.052f, 0.120f, launcherBand);
-        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.035f, -0.082f, 0.034f, 0.044f, launcherTip);
-        addUiRectRotated(vertices, tail, launcherAngle, 0.080f, 0.020f, 0.052f, 0.086f, {0.11f, 0.115f, 0.105f, 1.0f});
-        addUiRectRotated(vertices, tail, launcherAngle, 0.108f, 0.088f, 0.035f, 0.058f, {0.035f, 0.032f, 0.030f, 1.0f});
+        const std::array<float, 4> launcherBody = atomicLauncher ? std::array<float, 4>{0.060f, 0.070f, 0.050f, 1.0f} : (alternatePalette ? std::array<float, 4>{0.050f, 0.075f, 0.105f, 1.0f} : std::array<float, 4>{0.055f, 0.064f, 0.060f, 1.0f});
+        const std::array<float, 4> launcherBand = atomicLauncher ? std::array<float, 4>{0.88f, 0.95f, 0.08f, 1.0f} : (alternatePalette ? std::array<float, 4>{0.72f, 0.86f, 0.08f, 1.0f} : std::array<float, 4>{0.42f, 0.12f, 0.055f, 1.0f});
+        const std::array<float, 4> launcherTip = atomicLauncher ? std::array<float, 4>{0.35f, 1.0f, 0.86f, 1.0f} : (alternatePalette ? std::array<float, 4>{0.12f, 0.64f, 1.0f, 1.0f} : std::array<float, 4>{0.70f, 0.18f, 0.06f, 1.0f});
+        const float bodyHeight = atomicLauncher ? 0.086f : 0.068f;
+        addUiRectRotated(vertices, tail, launcherAngle, 0.000f, -bodyHeight * 0.5f, launcherLength, bodyHeight, launcherBody);
+        addUiRectRotated(vertices, tail, launcherAngle, -0.024f, atomicLauncher ? -0.064f : -0.052f, 0.086f, atomicLauncher ? 0.128f : 0.104f, atomicLauncher ? std::array<float, 4>{0.20f, 0.22f, 0.12f, 1.0f} : std::array<float, 4>{0.18f, 0.20f, 0.18f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.052f, atomicLauncher ? -0.074f : -0.060f, 0.060f, atomicLauncher ? 0.148f : 0.120f, launcherBand);
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.038f, atomicLauncher ? -0.096f : -0.082f, 0.040f, atomicLauncher ? 0.056f : 0.044f, launcherTip);
+        addUiRectRotated(vertices, tail, launcherAngle, 0.080f, 0.020f, 0.052f, 0.086f, atomicLauncher ? std::array<float, 4>{0.19f, 0.18f, 0.065f, 1.0f} : std::array<float, 4>{0.11f, 0.115f, 0.105f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, 0.108f, 0.088f, 0.035f, 0.058f, atomicLauncher ? std::array<float, 4>{0.070f, 0.060f, 0.020f, 1.0f} : std::array<float, 4>{0.035f, 0.032f, 0.030f, 1.0f});
+        if (atomicLauncher) {
+            const float pulse = 0.55f + 0.45f * std::sin(time * 7.0f);
+            addUiRectRotated(vertices, tail, launcherAngle, launcherLength * 0.34f, -0.055f, launcherLength * 0.11f, 0.014f, {0.95f, 1.0f, 0.12f, 0.76f});
+            addUiRectRotated(vertices, tail, launcherAngle, launcherLength * 0.50f, 0.042f, launcherLength * 0.16f, 0.014f, {0.95f, 1.0f, 0.12f, 0.64f});
+            addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.020f, -0.028f, 0.058f + pulse * 0.018f, 0.056f + pulse * 0.012f, {0.20f, 1.0f, 0.78f, 0.28f + pulse * 0.24f});
+        }
     } else if (shotgun) {
         const Vec2 grip{0.785f + sx, 0.770f + sy};
         const Vec2 muzzle{0.500f, 0.500f};
@@ -3049,28 +3056,67 @@ void drawOrbitTrail(const World& world, const LineUniforms& lineUniforms, GLuint
 
 void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, const Blast& blast) {
     if (!blast.active) return;
-    const float lifetime = blast.atomic ? 1.9f : 1.35f;
+    const float lifetime = blast.atomic ? 2.8f : 1.35f;
     const float t = std::clamp(blast.age / lifetime, 0.0f, 1.0f);
     const float radius = (blast.atomic ? 2.0f : 1.2f) + t * (blast.atomic ? 16.0f : 9.0f);
     std::vector<float> data;
-    data.reserve(3 * 220);
+    data.reserve(3 * 1200);
     auto addLine = [&data](Vec3 a, Vec3 b) {
         data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
         data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
     };
+    auto addCircle = [&addLine](Vec3 center, Vec3 axisA, Vec3 axisB, float radiusA, float radiusB, int segments) {
+        for (int i = 0; i < segments; ++i) {
+            const float a0 = static_cast<float>(i) / static_cast<float>(segments) * Pi * 2.0f;
+            const float a1 = static_cast<float>(i + 1) / static_cast<float>(segments) * Pi * 2.0f;
+            addLine(center + axisA * (std::cos(a0) * radiusA) + axisB * (std::sin(a0) * radiusB),
+                    center + axisA * (std::cos(a1) * radiusA) + axisB * (std::sin(a1) * radiusB));
+        }
+    };
     constexpr int Segments = 36;
-    for (int i = 0; i < Segments; ++i) {
-        const float a0 = static_cast<float>(i) / static_cast<float>(Segments) * Pi * 2.0f;
-        const float a1 = static_cast<float>(i + 1) / static_cast<float>(Segments) * Pi * 2.0f;
-        addLine(blast.position + Vec3{std::cos(a0) * radius, std::sin(a0) * radius, 0.0f},
-                blast.position + Vec3{std::cos(a1) * radius, std::sin(a1) * radius, 0.0f});
-        addLine(blast.position + Vec3{std::cos(a0) * radius, 0.0f, std::sin(a0) * radius},
-                blast.position + Vec3{std::cos(a1) * radius, 0.0f, std::sin(a1) * radius});
-    }
+    addCircle(blast.position, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, radius, radius, Segments);
+    addCircle(blast.position, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, radius, radius, Segments);
     for (int i = 0; i < 12; ++i) {
         const float a = static_cast<float>(i) / 12.0f * Pi * 2.0f;
         const Vec3 dir = normalize({std::cos(a), std::sin(a * 1.7f) * 0.45f, std::sin(a)});
         addLine(blast.position, blast.position + dir * (radius * 1.28f));
+    }
+    if (blast.atomic) {
+        const float rise = std::clamp((t - 0.08f) / 0.80f, 0.0f, 1.0f);
+        const float fadeIn = std::clamp(t / 0.18f, 0.0f, 1.0f);
+        const Vec3 up{0.0f, 1.0f, 0.0f};
+        const Vec3 right{1.0f, 0.0f, 0.0f};
+        const Vec3 forward{0.0f, 0.0f, 1.0f};
+        const float stemHeight = 2.0f + rise * 16.0f;
+        const float stemRadius = 0.75f + rise * 2.6f;
+        const Vec3 capCenter = blast.position + up * stemHeight;
+        const float capRadius = 3.0f + rise * 12.0f;
+        const float capHeight = 1.0f + rise * 3.6f;
+        for (int ring = 0; ring < 5; ++ring) {
+            const float f = static_cast<float>(ring) / 4.0f;
+            const float y = stemHeight * f;
+            const float r = stemRadius * (0.55f + f * 0.55f) * fadeIn;
+            addCircle(blast.position + up * y, right, forward, r, r, 28);
+        }
+        for (int ring = 0; ring < 5; ++ring) {
+            const float f = static_cast<float>(ring) / 4.0f;
+            const float y = (f - 0.5f) * capHeight;
+            const float squash = 1.0f - std::abs(f - 0.5f) * 0.72f;
+            addCircle(capCenter + up * y, right, forward, capRadius * squash, capRadius * (0.72f + squash * 0.18f), 44);
+        }
+        for (int i = 0; i < 22; ++i) {
+            const float a = static_cast<float>(i) / 22.0f * Pi * 2.0f + t * 1.8f;
+            const Vec3 side{std::cos(a), 0.0f, std::sin(a)};
+            const float curl = std::sin(a * 3.0f + t * 8.0f) * 0.55f;
+            addLine(blast.position + side * (stemRadius * 0.45f),
+                    capCenter + side * (capRadius * (0.38f + 0.10f * curl)) + up * (capHeight * 0.22f));
+        }
+        for (int i = 0; i < 18; ++i) {
+            const float a = static_cast<float>(i) / 18.0f * Pi * 2.0f;
+            const Vec3 side{std::cos(a), 0.0f, std::sin(a)};
+            addLine(capCenter + side * (capRadius * 0.55f),
+                    capCenter + side * (capRadius * (0.92f + 0.16f * std::sin(a * 4.0f))) - up * (2.0f + rise * 3.0f));
+        }
     }
 
     glUseProgram(lineUniforms.program);
@@ -4647,7 +4693,7 @@ int main() {
                 else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
                 drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
                 const float shotgunProgressTwo = std::clamp(playerTwo.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
-                drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, true);
+                drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, playerTwoToolMode == ToolMode::AtomicMissile, true);
             } else {
                 if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, width, height, feedScale);
                 else drawSatelliteFeed(textureUniform, satelliteCamera.color, width, height, renderTime, feedScale);
@@ -4662,7 +4708,7 @@ int main() {
                     ? miningTimer / std::max(0.001f, mineDuration(world.get(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z))))
                     : 0.0f;
                 drawMiningFeedback(uiProgram, uiVao, uiVbo, miningFeedback, miningFeedbackProgress, miningImpactTimer, renderTime);
-                drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, shotgunProgress, renderTime, false, miningImpactTimer);
+                drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, shotgunProgress, renderTime, playerToolMode == ToolMode::AtomicMissile, false, miningImpactTimer);
             }
             glDisable(GL_BLEND);
             glEnable(GL_CULL_FACE);
@@ -4726,7 +4772,7 @@ int main() {
         drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
         const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
         drawMiningFeedback(uiProgram, uiVao, uiVbo, showingMine, interactionProgress, miningImpactTimer, renderTime);
-        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime, false, miningImpactTimer);
+        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime, playerToolMode == ToolMode::AtomicMissile, false, miningImpactTimer);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
@@ -4768,7 +4814,7 @@ int main() {
         else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
         const float shotgunProgressTwo = std::clamp(playerTwo.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
-        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, true);
+        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, playerTwoToolMode == ToolMode::AtomicMissile, true);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
