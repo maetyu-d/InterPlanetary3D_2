@@ -4174,7 +4174,7 @@ int main() {
         float xScale = 1.0f;
         float yScale = 1.0f;
         glfwGetWindowContentScale(window, &xScale, &yScale);
-        feedScale = std::max(xScale, yScale);
+        feedScale = std::max(xScale, yScale) * 1.25f;
 #endif
         const SatelliteView liveSatelliteView = makeSatelliteView(satellitePosition);
         const SatelliteView liveSatelliteViewTwo = makeSatelliteView(satellitePositionTwo, {0.0f, 0.0f, 1.0f});
