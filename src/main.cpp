@@ -249,6 +249,13 @@ struct MissileFeedUniforms {
     GLint texture = -1;
 };
 
+struct ForcefieldUniforms {
+    GLuint program = 0;
+    GLint mvp = -1;
+    GLint time = -1;
+    GLint feedClarity = -1;
+};
+
 struct SatelliteView {
     Vec3 position{};
     Vec3 target{};
@@ -609,24 +616,56 @@ void generateWorld(World& world) {
 }
 
 Vec3 spawnPosition(const World& world) {
-    const int x = WorldSize / 2;
-    const int z = WorldSize / 2;
-    for (int y = WorldHeight - 1; y >= 0; --y) {
-        if (solid(world.get(x, y, z))) {
-            return {x + 0.5f, y + 1.2f, z + 0.5f};
+    constexpr int margin = 4;
+    int bestX = WorldSize / 2;
+    int bestY = -1;
+    int bestZ = WorldSize / 2;
+    int bestCenterDistance = WorldSize * WorldSize;
+    for (int z = margin; z < WorldSize - margin; ++z) {
+        for (int x = margin; x < WorldSize - margin; ++x) {
+            for (int y = WorldHeight - 1; y >= 0; --y) {
+                if (!solid(world.get(x, y, z))) continue;
+                const int dx = x - WorldSize / 2;
+                const int dz = z - WorldSize / 2;
+                const int centerDistance = dx * dx + dz * dz;
+                if (y > bestY || (y == bestY && centerDistance < bestCenterDistance)) {
+                    bestX = x;
+                    bestY = y;
+                    bestZ = z;
+                    bestCenterDistance = centerDistance;
+                }
+                break;
+            }
         }
     }
+    if (bestY >= 0) return {bestX + 0.5f, bestY + 1.2f, bestZ + 0.5f};
     return {WorldSize / 2.0f, WorldHeight + 4.0f, WorldSize / 2.0f};
 }
 
 Vec3 spawnPositionOppositeFace(const World& world) {
-    const int x = WorldSize / 2;
-    const int z = WorldSize / 2;
-    for (int y = 0; y < WorldHeight; ++y) {
-        if (solid(world.get(x, y, z))) {
-            return {x + 0.5f, y - PlayerHeight - 0.2f, z + 0.5f};
+    constexpr int margin = 4;
+    int bestX = WorldSize / 2;
+    int bestY = WorldHeight;
+    int bestZ = WorldSize / 2;
+    int bestCenterDistance = WorldSize * WorldSize;
+    for (int z = margin; z < WorldSize - margin; ++z) {
+        for (int x = margin; x < WorldSize - margin; ++x) {
+            for (int y = 0; y < WorldHeight; ++y) {
+                if (!solid(world.get(x, y, z))) continue;
+                const int dx = x - WorldSize / 2;
+                const int dz = z - WorldSize / 2;
+                const int centerDistance = dx * dx + dz * dz;
+                if (y < bestY || (y == bestY && centerDistance < bestCenterDistance)) {
+                    bestX = x;
+                    bestY = y;
+                    bestZ = z;
+                    bestCenterDistance = centerDistance;
+                }
+                break;
+            }
         }
     }
+    if (bestY < WorldHeight) return {bestX + 0.5f, bestY - PlayerHeight - 0.2f, bestZ + 0.5f};
     return {WorldSize / 2.0f, -PlayerHeight - 4.0f, WorldSize / 2.0f};
 }
 
@@ -717,6 +756,15 @@ MissileFeedUniforms missileFeedUniforms(GLuint program) {
         program,
         glGetUniformLocation(program, "uRect"),
         glGetUniformLocation(program, "uTexture")
+    };
+}
+
+ForcefieldUniforms forcefieldUniforms(GLuint program) {
+    return {
+        program,
+        glGetUniformLocation(program, "uMVP"),
+        glGetUniformLocation(program, "uTime"),
+        glGetUniformLocation(program, "uFeedClarity")
     };
 }
 
@@ -1803,13 +1851,13 @@ void drawVoxelScene(const VoxelUniforms& uniforms, const Mat4& vp, const Mesh& o
     }
 }
 
-void drawForcefield(GLuint program, const Mesh& forcefield, const Mat4& vp, float time, float feedClarity = 0.0f) {
+void drawForcefield(const ForcefieldUniforms& uniforms, const Mesh& forcefield, const Mat4& vp, float time, float feedClarity = 0.0f) {
     if (forcefield.count <= 0) return;
 
-    glUseProgram(program);
-    glUniformMatrix4fv(glGetUniformLocation(program, "uMVP"), 1, GL_FALSE, vp.m);
-    glUniform1f(glGetUniformLocation(program, "uTime"), time);
-    glUniform1f(glGetUniformLocation(program, "uFeedClarity"), feedClarity);
+    glUseProgram(uniforms.program);
+    glUniformMatrix4fv(uniforms.mvp, 1, GL_FALSE, vp.m);
+    glUniform1f(uniforms.time, time);
+    glUniform1f(uniforms.feedClarity, feedClarity);
 
     glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
@@ -2235,25 +2283,23 @@ uniform float uTime;
 uniform float uFeedClarity;
 out vec4 FragColor;
 
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
 void main() {
     vec2 p = vWorldPos.xz;
-    vec2 cell = abs(fract(p * 0.42) - 0.5);
-    float grid = 1.0 - smoothstep(0.018, 0.055, min(cell.x, cell.y));
-    float fine = 1.0 - smoothstep(0.010, 0.030, min(abs(fract(p.x * 1.75 + uTime * 1.8) - 0.5), abs(fract(p.y * 1.75 - uTime * 1.4) - 0.5)));
-    float rip = sin(p.x * 0.65 + uTime * 7.0) * sin(p.y * 0.53 - uTime * 5.4);
-    float lightning = smoothstep(0.78, 0.98, rip + hash(floor(p * 0.23 + uTime * 1.6)) * 0.46);
-    float boundary = max(smoothstep(-5.0, 0.0, vWorldPos.x) * (1.0 - smoothstep(72.0, 77.0, vWorldPos.x)),
-                         smoothstep(-5.0, 0.0, vWorldPos.z) * (1.0 - smoothstep(72.0, 77.0, vWorldPos.z)));
-    float energy = max(grid * 0.66, fine * 0.22);
-    energy = max(energy, lightning);
-    energy *= mix(0.55, 1.0, boundary);
+    vec2 coarseCell = abs(fract(p * 0.36) - 0.5);
+    vec2 fineCell = abs(fract(p * 1.18 + vec2(uTime * 0.42, -uTime * 0.31)) - 0.5);
+    float coarseGrid = 1.0 - smoothstep(0.020, 0.060, min(coarseCell.x, coarseCell.y));
+    float fineGrid = 1.0 - smoothstep(0.012, 0.035, min(fineCell.x, fineCell.y));
+    float sweep = 1.0 - smoothstep(0.00, 0.11, abs(fract((p.x + p.y) * 0.050 - uTime * 0.75) - 0.5));
+    vec2 edgeDistance = min(p + vec2(5.0), vec2(77.0) - p);
+    float edgeGlow = 1.0 - smoothstep(0.0, 5.0, min(edgeDistance.x, edgeDistance.y));
+    float flicker = 0.72 + 0.28 * step(0.5, fract(uTime * 10.0 + p.x * 0.07 + p.y * 0.11));
+    float energy = max(coarseGrid * 0.70, fineGrid * 0.22);
+    energy = max(energy, sweep * 0.42);
+    energy = max(energy, edgeGlow * 0.62);
+    energy *= flicker;
     vec3 color = mix(vec3(0.00, 0.18, 0.05), vec3(0.18, 1.0, 0.34), energy);
-    color += vec3(0.30, 1.0, 0.42) * lightning * 0.85;
-    float alpha = clamp(0.18 + energy * 0.48 + lightning * 0.22 + uFeedClarity * 0.16, 0.0, 0.82);
+    color += vec3(0.22, 0.85, 0.28) * max(sweep, edgeGlow) * 0.38;
+    float alpha = clamp(0.16 + energy * 0.46 + uFeedClarity * 0.12, 0.0, 0.72);
     FragColor = vec4(color, alpha);
 }
 )GLSL";
@@ -2477,6 +2523,7 @@ int main() {
     const LineUniforms lineUniform = lineUniforms(lineProgram);
     const TextureUniforms textureUniform = textureUniforms(textureProgram);
     const MissileFeedUniforms missileFeedUniform = missileFeedUniforms(missileFeedProgram);
+    const ForcefieldUniforms forcefieldUniform = forcefieldUniforms(forcefieldProgram);
     const GLint skyTimeUniform = glGetUniformLocation(skyProgram, "uTime");
     GLuint emptyVao = 0;
     glGenVertexArrays(1, &emptyVao);
@@ -2727,11 +2774,11 @@ int main() {
                 const Mat4 missileView = lookAt(missileEye, missileTarget, rocket.up);
                 const Mat4 missileVp = multiply(missileProj, missileView);
                 drawVoxelScene(voxelUniform, missileVp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, missileEye, rocket.direction, static_cast<float>(now), 1.0f, true);
-                drawForcefield(forcefieldProgram, forcefieldMesh, missileVp, static_cast<float>(now), 1.0f);
+                drawForcefield(forcefieldUniform, forcefieldMesh, missileVp, static_cast<float>(now), 1.0f);
             } else {
                 const SatelliteView satelliteView = makeSatelliteView(satellitePosition);
                 drawVoxelScene(satelliteUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, static_cast<float>(now), 0.0f, false);
-                drawForcefield(forcefieldProgram, forcefieldMesh, satelliteView.vp, static_cast<float>(now), 0.45f);
+                drawForcefield(forcefieldUniform, forcefieldMesh, satelliteView.vp, static_cast<float>(now), 0.45f);
                 glDisable(GL_DEPTH_TEST);
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -2753,7 +2800,7 @@ int main() {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo);
             drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, static_cast<float>(now), 0.0f, false);
-            drawForcefield(forcefieldProgram, forcefieldMesh, satelliteViewTwo.vp, static_cast<float>(now), 0.45f);
+            drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, static_cast<float>(now), 0.45f);
             glDisable(GL_DEPTH_TEST);
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -2784,7 +2831,7 @@ int main() {
 
         const Rocket& visibleRocket = rocket.active ? rocket : rocketTwo;
         drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eye, look, static_cast<float>(now));
-        drawForcefield(forcefieldProgram, forcefieldMesh, vp, static_cast<float>(now));
+        drawForcefield(forcefieldUniform, forcefieldMesh, vp, static_cast<float>(now));
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
@@ -2838,7 +2885,7 @@ int main() {
         const Mat4 viewTwo = lookAt(eyeTwo, eyeTwo + lookTwo, {0.0f, playerTwo.upSign, 0.0f});
         const Mat4 vpTwo = multiply(projTwo, viewTwo);
         drawVoxelScene(voxelUniform, vpTwo, opaque, transparentMesh, &satelliteMesh, satellitePositionTwo, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eyeTwo, lookTwo, static_cast<float>(now));
-        drawForcefield(forcefieldProgram, forcefieldMesh, vpTwo, static_cast<float>(now));
+        drawForcefield(forcefieldUniform, forcefieldMesh, vpTwo, static_cast<float>(now));
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, static_cast<float>(now) + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
