@@ -196,6 +196,7 @@ constexpr float NormalBuildTime = 0.28f;
 constexpr float HardBuildTime = 0.62f;
 constexpr std::size_t MaxUiVertices = 100000;
 constexpr std::size_t MaxLineVertices = 2048;
+constexpr double CameraFeedRefreshInterval = 1.0 / 120.0;
 constexpr const char* GameTitle = "InterPlanetary 3D";
 constexpr const char* GameTitleCaps = "INTERPLANETARY 3D";
 
@@ -4508,7 +4509,7 @@ int main() {
         const SatelliteView liveSatelliteViewTwo = makeSatelliteView(satellitePositionTwo, {0.0f, 0.0f, 1.0f});
 
         const bool missileCameraActive = rocket.active && rocket.age >= 1.0f;
-        if (satelliteFeedDirty || missileCameraActive || gameTime - lastSatelliteFeedTime >= 0.12) {
+        if (satelliteFeedDirty || missileCameraActive || gameTime - lastSatelliteFeedTime >= CameraFeedRefreshInterval) {
             resizeSatelliteCamera(satelliteCamera, missileCameraActive ? satelliteCamera.missileSize : satelliteCamera.satelliteSize);
             glBindFramebuffer(GL_FRAMEBUFFER, satelliteCamera.framebuffer);
             glViewport(0, 0, satelliteCamera.size, satelliteCamera.size);
@@ -4546,7 +4547,7 @@ int main() {
             lastSatelliteFeedTime = gameTime;
             satelliteFeedDirty = false;
         }
-        if (satelliteFeedDirty || gameTime - lastSatelliteFeedTimeTwo >= 0.12) {
+        if (satelliteFeedDirty || gameTime - lastSatelliteFeedTimeTwo >= CameraFeedRefreshInterval) {
             resizeSatelliteCamera(satelliteCameraTwo, satelliteCameraTwo.satelliteSize);
             glBindFramebuffer(GL_FRAMEBUFFER, satelliteCameraTwo.framebuffer);
             glViewport(0, 0, satelliteCameraTwo.size, satelliteCameraTwo.size);
