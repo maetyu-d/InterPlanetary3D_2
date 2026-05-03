@@ -3225,7 +3225,10 @@ void drawSatellitePlayerTracker(const LineUniforms& lineUniforms, GLuint lineVao
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
-    glLineWidth(3.0f);
+    glLineWidth(4.2f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glUniform4f(lineUniforms.color, color[0], color[1], color[2], color[3] * 0.30f);
+    glLineWidth(9.0f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -3893,20 +3896,26 @@ float hash(vec2 p) {
 }
 void main() {
     vec2 uv = vUV;
-    float tear = step(0.999, hash(vec2(floor(uv.y * 52.0), floor(uTime * 4.0)))) * 0.0015;
-    uv.x = clamp(uv.x + tear * sin(uv.y * 128.0 + uTime * 5.0), 0.0, 1.0);
+    float tear = step(0.997, hash(vec2(floor(uv.y * 52.0), floor(uTime * 5.0)))) * 0.0030;
+    uv.x = clamp(uv.x + tear * sin(uv.y * 118.0 + uTime * 6.0), 0.0, 1.0);
     vec3 color = texture(uTexture, uv).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
     float frame = 1.0 - smoothstep(0.012, 0.026, min(edge.x, edge.y));
-    float row = floor(vUV.y * 420.0);
-    float staticNoise = hash(vec2(floor(vUV.x * 520.0) + floor(uTime * 12.0), row)) - 0.5;
-    float scan = sin(vUV.y * 1440.0) * 0.004;
-    float band = smoothstep(0.018, 0.0, abs(fract(vUV.y * 4.0 + uTime * 0.16) - 0.5)) * 0.010;
-    vec3 cctv = color * 1.10 + staticNoise * 0.008 + scan - band;
+    float grey = dot(color, vec3(0.299, 0.587, 0.114));
+    float row = floor(vUV.y * 320.0);
+    float staticNoise = hash(vec2(floor(vUV.x * 420.0) + floor(uTime * 16.0), row)) - 0.5;
+    float scan = sin(vUV.y * 1180.0) * 0.010;
+    float band = smoothstep(0.026, 0.0, abs(fract(vUV.y * 4.0 + uTime * 0.18) - 0.5)) * 0.030;
+    float contour = smoothstep(0.018, 0.0, abs(fract(grey * 7.0) - 0.5)) * 0.08;
+    vec3 mapColor = mix(vec3(0.010, 0.055, 0.034), vec3(0.20, 0.78, 0.42), smoothstep(0.12, 0.86, grey));
+    float resource = max(color.b - max(color.r, color.g) * 0.42, color.g - color.r * 0.55);
+    mapColor += vec3(0.08, 0.30, 0.24) * smoothstep(0.18, 0.80, resource);
+    vec3 cctv = mapColor + staticNoise * 0.014 + scan + contour - band;
     float vignette = smoothstep(0.78, 0.18, distance(vUV, vec2(0.5)));
-    cctv *= 0.94 + vignette * 0.30;
-    cctv = pow(max(cctv, vec3(0.0)), vec3(0.90));
-    cctv = mix(cctv, vec3(0.006, 0.008, 0.007), frame * 0.62);
+    cctv *= 0.76 + vignette * 0.62;
+    cctv = mix(cctv, floor(max(cctv, vec3(0.0)) * 80.0) / 80.0, 0.42);
+    cctv = pow(max(cctv, vec3(0.0)), vec3(0.92));
+    cctv = mix(cctv, vec3(0.002, 0.012, 0.006), frame * 0.80);
     FragColor = vec4(cctv, 1.0);
 }
 )GLSL";
@@ -4532,7 +4541,7 @@ int main() {
                 if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, missileVp, renderTime, 1.0f);
             } else {
                 const SatelliteView satelliteView = makeSatelliteView(satellitePosition);
-                drawVoxelScene(voxelUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, renderTime, 0.35f, true);
+                drawVoxelScene(satelliteUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, renderTime, 0.0f, false);
                 if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, satelliteView.vp, renderTime, 0.45f);
                 glDisable(GL_DEPTH_TEST);
                 glEnable(GL_BLEND);
@@ -4554,7 +4563,7 @@ int main() {
             glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo, {0.0f, 0.0f, 1.0f});
-            drawVoxelScene(voxelUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, renderTime, 0.35f, true);
+            drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, renderTime, 0.0f, false);
             if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, renderTime, 0.45f);
             glDisable(GL_DEPTH_TEST);
             glEnable(GL_BLEND);
