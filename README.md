@@ -2,6 +2,23 @@
 
 A bleak voxel-based, local 2 player duel inspired by Minecraft and Worms, but also WWI trench warefare, drone warfare in Ukraine, British government leafleting on domestic atomic bomb shelters, and the opening sequence of David Lynch's Eraserhead, all rendered with GLFW and modern OpenGL. The world is a six-faced cube planet under a low burning sky, with monochrome terrain, heavy ash fog, rare electric-blue fuel seams, toxic-yellow plutonium pockets, a dying scorched sun, and an orbiting satellite with a live downward camera feed.
 
+## Screenshots
+
+<img width="1392" height="926" alt="Screenshot 2026-05-03 at 18 43 07" src="https://github.com/user-attachments/assets/267ee69e-2be3-4823-838a-d42526d1b245" />
+
+<img width="1392" height="926" alt="Screenshot 2026-05-03 at 18 46 14" src="https://github.com/user-attachments/assets/59c56145-ce56-4784-9758-5b997bc82b51" />
+
+<img width="1392" height="926" alt="Screenshot 2026-05-03 at 18 45 45" src="https://github.com/user-attachments/assets/15cd8a08-dd93-4d68-ae4f-92d80a2a9312" />
+
+<img width="1392" height="926" alt="Screenshot 2026-05-03 at 18 43 21" src="https://github.com/user-attachments/assets/3f77cafd-c400-4738-b844-e7c85e0aac34" />
+
+<img width="1392" height="926" alt="Screenshot 2026-05-03 at 18 43 38" src="https://github.com/user-attachments/assets/6a380629-49a2-48bd-9ea3-a065a13af522" />
+
+<img width="1392" height="926" alt="Screenshot 2026-05-03 at 18 43 53" src="https://github.com/user-attachments/assets/e6756429-2017-4983-95a7-47d42cec0f67" />
+
+
+
+
 ## Build and Run
 
 ```sh
