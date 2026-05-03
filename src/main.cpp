@@ -2519,7 +2519,6 @@ void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme th
     const std::array<float, 4> text{0.80f, 1.0f, 0.86f, 0.96f};
     const std::array<float, 4> muted{0.36f, 0.62f, 0.50f, 0.92f};
 
-    addUiRect(vertices, 0.0f, 0.0f, 1.0f, 1.0f, {0.015f, 0.012f, 0.010f, 1.0f});
     addUiRect(vertices, 0.0f, 0.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f, 0.48f});
     addUiTextCentered(vertices, 0.5f, 0.145f, 0.0054f, GameTitleCaps, {0.95f, 1.0f, 0.92f, 0.98f});
     addUiRect(vertices, 0.32f, 0.205f, 0.36f, 0.006f, ember);
