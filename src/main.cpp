@@ -197,7 +197,8 @@ enum class WorldTheme {
 enum class SatelliteOrbit {
     CurrentFace,
     OppositeFace,
-    Polar
+    Polar,
+    PerpendicularPolar
 };
 
 enum class ToolMode {
@@ -232,6 +233,11 @@ enum class GameScreen {
 enum class QuitChoice {
     No,
     Yes
+};
+
+enum class MatchEndChoice {
+    Rematch,
+    Title
 };
 
 struct MatchState {
@@ -570,6 +576,7 @@ const char* orbitName(SatelliteOrbit orbit) {
         case SatelliteOrbit::CurrentFace: return "current face";
         case SatelliteOrbit::OppositeFace: return "opposite face";
         case SatelliteOrbit::Polar: return "polar";
+        case SatelliteOrbit::PerpendicularPolar: return "cross polar";
     }
     return "current face";
 }
@@ -579,6 +586,7 @@ SatelliteOrbit nextOrbit(SatelliteOrbit orbit) {
         case SatelliteOrbit::CurrentFace: return SatelliteOrbit::OppositeFace;
         case SatelliteOrbit::OppositeFace: return SatelliteOrbit::Polar;
         case SatelliteOrbit::Polar: return SatelliteOrbit::CurrentFace;
+        case SatelliteOrbit::PerpendicularPolar: return SatelliteOrbit::CurrentFace;
     }
     return SatelliteOrbit::CurrentFace;
 }
@@ -1865,7 +1873,7 @@ Vec3 satellitePositionAt(const World& world, float time, SatelliteOrbit orbit, f
             worldCenter.z + std::sin(angle) * 25.0f
         };
     }
-    if (orbit == SatelliteOrbit::Polar) {
+    if (orbit == SatelliteOrbit::Polar || orbit == SatelliteOrbit::PerpendicularPolar) {
         constexpr float HalfWorld = WorldSize * 0.5f;
         const float PolarAltitude = orbitHeight;
         const float outer = HalfWorld + PolarAltitude;
@@ -1911,6 +1919,7 @@ Vec3 satellitePositionAt(const World& world, float time, SatelliteOrbit orbit, f
             z = p.x;
             y = p.y;
         }
+        if (orbit == SatelliteOrbit::PerpendicularPolar) return {worldCenter.x + z, worldCenter.y + y, worldCenter.z};
         return {worldCenter.x, worldCenter.y + y, worldCenter.z + z};
     }
     return {
@@ -1928,12 +1937,13 @@ Vec3 closestPointOnPlanetCube(Vec3 point) {
     };
 }
 
-SatelliteView makeSatelliteView(Vec3 position) {
+SatelliteView makeSatelliteView(Vec3 position, Vec3 preferredUp = {1.0f, 0.0f, 0.0f}) {
     SatelliteView view{};
     view.position = position;
     view.target = closestPointOnPlanetCube(position);
     view.down = normalize(view.target - view.position);
-    view.up = {1.0f, 0.0f, 0.0f};
+    view.up = preferredUp;
+    if (length(cross(view.down, view.up)) < 0.05f) view.up = {0.0f, 1.0f, 0.0f};
     const Mat4 proj = perspective(46.0f * Pi / 180.0f, 1.0f, 0.2f, 180.0f);
     const Mat4 camera = lookAt(view.position, view.target, view.up);
     view.vp = multiply(proj, camera);
@@ -2378,6 +2388,46 @@ void drawQuitPrompt(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, QuitChoice cho
     glBindVertexArray(0);
 }
 
+void drawMatchEndScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const MatchState& match, const Player& player, const Player& playerTwo, MatchEndChoice choice) {
+    std::vector<UiVertex> vertices;
+    vertices.reserve(3600);
+    const std::array<float, 4> text{0.86f, 1.0f, 0.90f, 0.98f};
+    const std::array<float, 4> muted{0.36f, 0.62f, 0.50f, 0.92f};
+    const std::array<float, 4> green{0.25f, 1.0f, 0.55f, 0.92f};
+    const std::array<float, 4> red{0.95f, 0.18f, 0.055f, 0.92f};
+    const std::array<float, 4> blue{0.16f, 0.55f, 1.0f, 0.92f};
+
+    std::string mode = "FIRST TO 3";
+    if (match.type == GameType::PhasedTurns) mode = "10 TURNS";
+    if (match.type == GameType::AlternatingHunter) mode = "HUNTER";
+    const std::string winner = match.winner == 1 ? "PLAYER 1 WINS" : "PLAYER 2 WINS";
+    const std::string score = std::to_string(player.score) + " - " + std::to_string(playerTwo.score);
+    const bool rematchSelected = choice == MatchEndChoice::Rematch;
+
+    addUiRect(vertices, 0.0f, 0.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f, 0.58f});
+    addUiRect(vertices, 0.315f, 0.285f, 0.370f, 0.390f, {0.0f, 0.0f, 0.0f, 0.84f});
+    addUiRect(vertices, 0.315f, 0.285f, 0.006f, 0.390f, match.winner == 1 ? red : blue);
+    addUiTextCentered(vertices, 0.500f, 0.330f, 0.0046f, winner, text);
+    addUiTextCentered(vertices, 0.500f, 0.405f, 0.0032f, "FINAL SCORE", muted);
+    addUiTextCentered(vertices, 0.500f, 0.445f, 0.0042f, score, green);
+    addUiTextCentered(vertices, 0.500f, 0.505f, 0.0032f, "MODE", muted);
+    addUiTextCentered(vertices, 0.500f, 0.545f, 0.0037f, mode, text);
+
+    addUiRect(vertices, 0.382f, 0.600f, 0.105f, 0.046f, rematchSelected ? std::array<float, 4>{0.04f, 0.18f, 0.10f, 0.88f} : std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.40f});
+    addUiRect(vertices, 0.512f, 0.600f, 0.120f, 0.046f, rematchSelected ? std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.40f} : std::array<float, 4>{0.20f, 0.035f, 0.025f, 0.88f});
+    addUiTextCentered(vertices, 0.435f, 0.615f, 0.00265f, "REMATCH", rematchSelected ? green : muted);
+    addUiTextCentered(vertices, 0.572f, 0.615f, 0.00265f, "TITLE", rematchSelected ? muted : red);
+    addUiTextCentered(vertices, 0.500f, 0.685f, 0.00195f, "LEFT RIGHT ENTER", muted);
+
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    if (vertices.size() > MaxUiVertices) vertices.resize(MaxUiVertices);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
 void addHudDigit(std::vector<UiVertex>& vertices, float x, float y, float size, int digit, std::array<float, 4> color) {
     const float t = size * 0.16f;
     const float w = size * 0.62f;
@@ -2636,7 +2686,7 @@ void drawForcefield(const ForcefieldUniforms& uniforms, const Mesh& forcefield, 
     glEnable(GL_CULL_FACE);
 }
 
-void drawOrbitTrail(const World& world, const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, float time, SatelliteOrbit orbit, float orbitHeight) {
+void drawOrbitTrail(const World& world, const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, float time, SatelliteOrbit orbit, float orbitHeight, std::array<float, 4> color) {
     std::vector<float> data;
     constexpr int Segments = 64;
     data.reserve(Segments * 3);
@@ -2652,7 +2702,7 @@ void drawOrbitTrail(const World& world, const LineUniforms& lineUniforms, GLuint
 
     glUseProgram(lineUniforms.program);
     glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
-    glUniform4f(lineUniforms.color, 0.86f, 0.18f, 0.08f, 0.36f);
+    glUniform4f(lineUniforms.color, color[0], color[1], color[2], color[3]);
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
@@ -3520,6 +3570,7 @@ int main() {
     int titleRow = 0;
     bool quitPrompt = false;
     QuitChoice quitChoice = QuitChoice::No;
+    MatchEndChoice matchEndChoice = MatchEndChoice::Rematch;
     auto resetMatch = [&](double gameNow) {
         player.score = 0;
         playerTwo.score = 0;
@@ -3541,6 +3592,7 @@ int main() {
         match.suddenDeath = false;
         match.over = false;
         match.winner = 0;
+        matchEndChoice = MatchEndChoice::Rematch;
         match.firstHunter = ((world.seed + static_cast<int>(gameNow * 10.0)) & 1) ? 1 : 2;
         rocket.active = false;
         rocketTwo.active = false;
@@ -3648,6 +3700,21 @@ int main() {
                     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 }
             }
+        } else if (match.over) {
+            if (keyPressed(GLFW_KEY_LEFT) || keyPressed(GLFW_KEY_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_LEFT)) matchEndChoice = MatchEndChoice::Rematch;
+            if (keyPressed(GLFW_KEY_RIGHT) || keyPressed(GLFW_KEY_D) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT)) matchEndChoice = MatchEndChoice::Title;
+            if (keyPressed(GLFW_KEY_ESCAPE) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_B)) matchEndChoice = MatchEndChoice::Title;
+            if (keyPressed(GLFW_KEY_ENTER) || keyPressed(GLFW_KEY_SPACE) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_START)) {
+                if (matchEndChoice == MatchEndChoice::Rematch) {
+                    startGame();
+                } else {
+                    screen = GameScreen::Title;
+                    matchEndChoice = MatchEndChoice::Rematch;
+                    mouseCaptured = false;
+                    firstMouse = true;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                }
+            }
         } else if (keyPressed(GLFW_KEY_ESCAPE)) {
             quitPrompt = true;
             quitChoice = QuitChoice::No;
@@ -3656,7 +3723,7 @@ int main() {
             pendingMouseLook = {};
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
-        const bool gamePaused = quitPrompt;
+        const bool gamePaused = quitPrompt || match.over;
         const float simDt = gamePaused ? 0.0f : dt;
         gameTime += static_cast<double>(simDt);
         const float renderTime = static_cast<float>(gameTime);
@@ -3686,6 +3753,7 @@ int main() {
         satelliteOrbitHeight += (targetSatelliteOrbitHeight - satelliteOrbitHeight) * std::min(1.0f, simDt * 2.4f);
         if (std::abs(targetSatelliteOrbitHeight - satelliteOrbitHeight) > 0.05f) satelliteFeedDirty = true;
 
+        const bool matchWasOver = match.over;
         const double matchElapsed = gameTime - match.startedAt;
         if (!match.over && !match.suddenDeath) {
             if (match.type == GameType::FirstToThree && matchElapsed >= 600.0 && player.score < 3 && playerTwo.score < 3) {
@@ -3730,7 +3798,7 @@ int main() {
         const Vec3 eye{player.position.x, player.position.y + player.upSign * PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
         const Vec3 satellitePosition = satellitePositionAt(world, renderTime, satelliteOrbit, satelliteOrbitHeight);
-        const Vec3 satellitePositionTwo = satellitePositionAt(world, renderTime + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
+        const Vec3 satellitePositionTwo = satellitePositionAt(world, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight);
 
         Vec3 hit{};
         Vec3 previous{};
@@ -3911,14 +3979,28 @@ int main() {
             if (match.over) {
                 rocket.active = false;
                 rocketTwo.active = false;
+                matchEndChoice = MatchEndChoice::Rematch;
+                mouseCaptured = false;
+                firstMouse = true;
+                pendingMouseLook = {};
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
+        }
+        if (!matchWasOver && match.over) {
+            rocket.active = false;
+            rocketTwo.active = false;
+            matchEndChoice = MatchEndChoice::Rematch;
+            mouseCaptured = false;
+            firstMouse = true;
+            pendingMouseLook = {};
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
 
         int width = 1;
         int height = 1;
         glfwGetFramebufferSize(window, &width, &height);
         const SatelliteView liveSatelliteView = makeSatelliteView(satellitePosition);
-        const SatelliteView liveSatelliteViewTwo = makeSatelliteView(satellitePositionTwo);
+        const SatelliteView liveSatelliteViewTwo = makeSatelliteView(satellitePositionTwo, {0.0f, 0.0f, 1.0f});
 
         const bool missileCameraActive = rocket.active && rocket.age >= 1.0f;
         if (satelliteFeedDirty || missileCameraActive || gameTime - lastSatelliteFeedTime >= 0.12) {
@@ -3965,7 +4047,7 @@ int main() {
             glViewport(0, 0, satelliteCameraTwo.size, satelliteCameraTwo.size);
             glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo);
+            const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo, {0.0f, 0.0f, 1.0f});
             drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, renderTime, 0.0f, false);
             if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, renderTime, 0.45f);
             glDisable(GL_DEPTH_TEST);
@@ -4002,7 +4084,7 @@ int main() {
         if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vp, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight);
+        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight, {0.86f, 0.18f, 0.08f, 0.36f});
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocket, renderTime);
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocketTwo, renderTime);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blast);
@@ -4060,7 +4142,7 @@ int main() {
         if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vpTwo, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, renderTime + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
+        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, renderTime + Pi / 0.22f, SatelliteOrbit::PerpendicularPolar, satelliteOrbitHeight, {0.15f, 0.55f, 1.0f, 0.42f});
         drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocket, renderTime);
         drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocketTwo, renderTime);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blast);
@@ -4094,7 +4176,8 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawMatchHud(uiProgram, uiVao, uiVbo, match, player, playerTwo, gameTime, modeSecondsRemaining);
-        if (quitPrompt) drawQuitPrompt(uiProgram, uiVao, uiVbo, quitChoice);
+        if (match.over) drawMatchEndScreen(uiProgram, uiVao, uiVbo, match, player, playerTwo, matchEndChoice);
+        else if (quitPrompt) drawQuitPrompt(uiProgram, uiVao, uiVbo, quitChoice);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
