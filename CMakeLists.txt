@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(CubeWorld LANGUAGES CXX)
+project(InterPlanetary3D
+    HOMEPAGE_URL "https://matd.space"
+    LANGUAGES CXX
+)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,10 +22,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glfw)
 
-add_executable(cube_world src/main.cpp)
-target_link_libraries(cube_world PRIVATE glfw)
+set(CPACK_PACKAGE_VENDOR "matd.space")
+
+add_executable(interplanetary3d src/main.cpp)
+set_target_properties(interplanetary3d PROPERTIES OUTPUT_NAME "InterPlanetary3D")
+target_link_libraries(interplanetary3d PRIVATE glfw)
 
 if(APPLE)
-    target_compile_definitions(cube_world PRIVATE GL_SILENCE_DEPRECATION)
-    target_link_libraries(cube_world PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
+    target_compile_definitions(interplanetary3d PRIVATE GL_SILENCE_DEPRECATION)
+    target_link_libraries(interplanetary3d PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
 endif()

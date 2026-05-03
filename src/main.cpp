@@ -38,6 +38,9 @@ constexpr float CoyoteTime = 0.11f;
 constexpr float JumpBufferTime = 0.13f;
 constexpr float NormalBuildTime = 0.28f;
 constexpr float HardBuildTime = 0.62f;
+constexpr std::size_t MaxUiVertices = 100000;
+constexpr const char* GameTitle = "InterPlanetary 3D";
+constexpr const char* GameTitleCaps = "INTERPLANETARY 3D";
 
 struct Vec2 {
     float x = 0.0f;
@@ -208,6 +211,16 @@ enum class GameType {
     AlternatingHunter
 };
 
+enum class P2Control {
+    Keyboard,
+    Gamepad
+};
+
+enum class GameScreen {
+    Title,
+    Playing
+};
+
 struct MatchState {
     GameType type = GameType::FirstToThree;
     double startedAt = 0.0;
@@ -368,7 +381,7 @@ struct Cell {
 };
 
 GLFWwindow* window = nullptr;
-bool mouseCaptured = true;
+bool mouseCaptured = false;
 bool firstMouse = true;
 Vec2 lastMouse{};
 Vec2 pendingMouseLook{};
@@ -517,6 +530,16 @@ WorldTheme nextTheme(WorldTheme theme) {
     return WorldTheme::Dead;
 }
 
+WorldTheme previousTheme(WorldTheme theme) {
+    switch (theme) {
+        case WorldTheme::Dead: return WorldTheme::Brutalist;
+        case WorldTheme::Desert: return WorldTheme::Dead;
+        case WorldTheme::Lush: return WorldTheme::Desert;
+        case WorldTheme::Brutalist: return WorldTheme::Lush;
+    }
+    return WorldTheme::Dead;
+}
+
 int themeShaderValue(WorldTheme theme) {
     switch (theme) {
         case WorldTheme::Dead: return 0;
@@ -579,6 +602,19 @@ const char* gameTypeName(GameType type) {
         case GameType::AlternatingHunter: return "alternating hunter";
     }
     return "first to 3";
+}
+
+GameType previousGameType(GameType type) {
+    switch (type) {
+        case GameType::FirstToThree: return GameType::AlternatingHunter;
+        case GameType::PhasedTurns: return GameType::FirstToThree;
+        case GameType::AlternatingHunter: return GameType::PhasedTurns;
+    }
+    return GameType::FirstToThree;
+}
+
+const char* p2ControlName(P2Control control) {
+    return control == P2Control::Keyboard ? "keys" : "gamepad";
 }
 
 const char* turnPhaseName(const MatchState& match, double now) {
@@ -1378,6 +1414,9 @@ Vec3 rotateAroundAxis(Vec3 v, Vec3 axis, float angle) {
     return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
 }
 
+bool gamepadButtonDown(int button);
+float gamepadAxis(int axis);
+
 void updatePlayer(const World& world, Player& player, float dt, float forcefieldY, bool allowLook = true, bool allowMove = true) {
     if (allowLook) {
         player.lookVelocityX = player.lookVelocityX * 0.42f + pendingMouseLook.x * 0.58f;
@@ -1454,7 +1493,7 @@ void updatePlayer(const World& world, Player& player, float dt, float forcefield
     }
 }
 
-void updatePlayerTwo(const World& world, Player& player, float dt, float forcefieldY, bool allowInput = true) {
+void updatePlayerTwo(const World& world, Player& player, float dt, float forcefieldY, bool allowInput = true, P2Control control = P2Control::Keyboard) {
     if (!allowInput) {
         player.velocity = {};
         player.jumpWasDown = false;
@@ -1464,27 +1503,41 @@ void updatePlayerTwo(const World& world, Player& player, float dt, float forcefi
     }
 
     const float lookSpeed = 1.9f * dt;
-    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) player.yaw += lookSpeed;
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) player.yaw -= lookSpeed;
-    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) player.pitch += lookSpeed;
-    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) player.pitch -= lookSpeed;
+    if (control == P2Control::Gamepad) {
+        player.yaw -= gamepadAxis(GLFW_GAMEPAD_AXIS_RIGHT_X) * lookSpeed * 2.1f;
+        player.pitch -= gamepadAxis(GLFW_GAMEPAD_AXIS_RIGHT_Y) * lookSpeed * 2.1f;
+    } else {
+        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) player.yaw += lookSpeed;
+        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) player.yaw -= lookSpeed;
+        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) player.pitch += lookSpeed;
+        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) player.pitch -= lookSpeed;
+    }
     player.pitch = std::clamp(player.pitch, -1.35f, 1.35f);
 
     Vec3 forward = normalize(forwardFromAngles(player.yaw, 0.0f));
     Vec3 right = normalize(cross(forward, {0.0f, player.upSign, 0.0f}));
     Vec3 input{};
-    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) input = input + forward;
-    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) input = input - forward;
-    if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) input = input + right;
-    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) input = input - right;
+    if (control == P2Control::Gamepad) {
+        input = input + forward * (-gamepadAxis(GLFW_GAMEPAD_AXIS_LEFT_Y));
+        input = input + right * gamepadAxis(GLFW_GAMEPAD_AXIS_LEFT_X);
+    } else {
+        if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) input = input + forward;
+        if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) input = input - forward;
+        if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) input = input + right;
+        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) input = input - right;
+    }
     if (length(input) > 0.0f) input = normalize(input);
 
-    const bool jumpDown = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_KP_ENTER) == GLFW_PRESS;
+    const bool jumpDown = control == P2Control::Gamepad
+        ? gamepadButtonDown(GLFW_GAMEPAD_BUTTON_A)
+        : (glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_KP_ENTER) == GLFW_PRESS);
     if (jumpDown && !player.jumpWasDown) player.jumpBufferTimer = JumpBufferTime;
     else player.jumpBufferTimer = std::max(0.0f, player.jumpBufferTimer - dt);
     player.jumpWasDown = jumpDown;
 
-    const bool sprinting = glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    const bool sprinting = control == P2Control::Gamepad
+        ? gamepadButtonDown(GLFW_GAMEPAD_BUTTON_LEFT_BUMPER)
+        : glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
     const float targetSpeed = sprinting ? SprintSpeed : WalkSpeed;
     const Vec3 desiredVelocity{input.x * targetSpeed, 0.0f, input.z * targetSpeed};
     const float accel = player.grounded ? GroundAcceleration : AirAcceleration;
@@ -1805,7 +1858,7 @@ GLuint makeUiVao(GLuint& vbo) {
     glGenBuffers(1, &vbo);
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(UiVertex) * 256, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(UiVertex) * MaxUiVertices, nullptr, GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(UiVertex), reinterpret_cast<void*>(offsetof(UiVertex, x)));
     glEnableVertexAttribArray(1);
@@ -1855,6 +1908,100 @@ void addUiRectRotated(std::vector<UiVertex>& vertices, Vec2 origin, float angle,
         origin + rotateUi({x, y + h}, angle)
     }};
     addUiQuad(vertices, points, color);
+}
+
+const std::array<const char*, 7>& glyphRows(char ch) {
+    static const std::array<const char*, 7> blank{{"00000", "00000", "00000", "00000", "00000", "00000", "00000"}};
+    static const std::array<const char*, 7> unknown{{"11110", "00010", "00100", "01000", "01000", "00000", "01000"}};
+    static const std::array<std::array<const char*, 7>, 36> glyphs{{
+        {{"01110", "10001", "10011", "10101", "11001", "10001", "01110"}},
+        {{"00100", "01100", "00100", "00100", "00100", "00100", "01110"}},
+        {{"01110", "10001", "00001", "00010", "00100", "01000", "11111"}},
+        {{"11110", "00001", "00001", "01110", "00001", "00001", "11110"}},
+        {{"00010", "00110", "01010", "10010", "11111", "00010", "00010"}},
+        {{"11111", "10000", "10000", "11110", "00001", "00001", "11110"}},
+        {{"01110", "10000", "10000", "11110", "10001", "10001", "01110"}},
+        {{"11111", "00001", "00010", "00100", "01000", "01000", "01000"}},
+        {{"01110", "10001", "10001", "01110", "10001", "10001", "01110"}},
+        {{"01110", "10001", "10001", "01111", "00001", "00001", "01110"}},
+        {{"01110", "10001", "10001", "11111", "10001", "10001", "10001"}},
+        {{"11110", "10001", "10001", "11110", "10001", "10001", "11110"}},
+        {{"01111", "10000", "10000", "10000", "10000", "10000", "01111"}},
+        {{"11110", "10001", "10001", "10001", "10001", "10001", "11110"}},
+        {{"11111", "10000", "10000", "11110", "10000", "10000", "11111"}},
+        {{"11111", "10000", "10000", "11110", "10000", "10000", "10000"}},
+        {{"01111", "10000", "10000", "10011", "10001", "10001", "01111"}},
+        {{"10001", "10001", "10001", "11111", "10001", "10001", "10001"}},
+        {{"01110", "00100", "00100", "00100", "00100", "00100", "01110"}},
+        {{"00001", "00001", "00001", "00001", "10001", "10001", "01110"}},
+        {{"10001", "10010", "10100", "11000", "10100", "10010", "10001"}},
+        {{"10000", "10000", "10000", "10000", "10000", "10000", "11111"}},
+        {{"10001", "11011", "10101", "10101", "10001", "10001", "10001"}},
+        {{"10001", "11001", "10101", "10011", "10001", "10001", "10001"}},
+        {{"01110", "10001", "10001", "10001", "10001", "10001", "01110"}},
+        {{"11110", "10001", "10001", "11110", "10000", "10000", "10000"}},
+        {{"01110", "10001", "10001", "10001", "10101", "10010", "01101"}},
+        {{"11110", "10001", "10001", "11110", "10100", "10010", "10001"}},
+        {{"01111", "10000", "10000", "01110", "00001", "00001", "11110"}},
+        {{"11111", "00100", "00100", "00100", "00100", "00100", "00100"}},
+        {{"10001", "10001", "10001", "10001", "10001", "10001", "01110"}},
+        {{"10001", "10001", "10001", "10001", "10001", "01010", "00100"}},
+        {{"10001", "10001", "10001", "10101", "10101", "11011", "10001"}},
+        {{"10001", "10001", "01010", "00100", "01010", "10001", "10001"}},
+        {{"10001", "10001", "01010", "00100", "00100", "00100", "00100"}},
+        {{"11111", "00001", "00010", "00100", "01000", "10000", "11111"}}
+    }};
+    if (ch == ' ') return blank;
+    if (ch >= '0' && ch <= '9') return glyphs[static_cast<std::size_t>(ch - '0')];
+    if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+    if (ch >= 'A' && ch <= 'Z') return glyphs[static_cast<std::size_t>(10 + ch - 'A')];
+    return unknown;
+}
+
+void addUiText(std::vector<UiVertex>& vertices, float x, float y, float size, const std::string& text, std::array<float, 4> color) {
+    const float pixel = size;
+    const float gap = pixel;
+    float cursor = x;
+    for (char ch : text) {
+        if (ch == '-') {
+            addUiRect(vertices, cursor, y + pixel * 3.0f, pixel * 4.0f, pixel, color);
+            cursor += pixel * 6.0f;
+            continue;
+        }
+        if (ch == '/') {
+            for (int row = 0; row < 5; ++row) addUiRect(vertices, cursor + pixel * static_cast<float>(4 - row), y + pixel * static_cast<float>(row + 1), pixel, pixel, color);
+            cursor += pixel * 6.0f;
+            continue;
+        }
+        if (ch == ':') {
+            addUiRect(vertices, cursor + pixel * 2.0f, y + pixel * 2.0f, pixel, pixel, color);
+            addUiRect(vertices, cursor + pixel * 2.0f, y + pixel * 5.0f, pixel, pixel, color);
+            cursor += pixel * 4.0f;
+            continue;
+        }
+        const auto& rows = glyphRows(ch);
+        for (int row = 0; row < 7; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                if (rows[static_cast<std::size_t>(row)][col] == '1') {
+                    addUiRect(vertices, cursor + static_cast<float>(col) * pixel, y + static_cast<float>(row) * pixel, pixel, pixel, color);
+                }
+            }
+        }
+        cursor += pixel * 5.0f + gap;
+    }
+}
+
+float uiTextWidth(float size, const std::string& text) {
+    float width = 0.0f;
+    for (char ch : text) {
+        if (ch == ':') width += size * 4.0f;
+        else width += size * 6.0f;
+    }
+    return width;
+}
+
+void addUiTextCentered(std::vector<UiVertex>& vertices, float centerX, float y, float size, const std::string& text, std::array<float, 4> color) {
+    addUiText(vertices, centerX - uiTextWidth(size, text) * 0.5f, y, size, text, color);
 }
 
 void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool rocketLauncher, float progress, float time, bool alternatePalette = false) {
@@ -1989,21 +2136,79 @@ void drawPlayerStatus(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Player
     glBindVertexArray(0);
 }
 
+void addHudDigit(std::vector<UiVertex>& vertices, float x, float y, float size, int digit, std::array<float, 4> color);
+
+void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme theme, GameType gameType, P2Control p2Control, int selectedRow, float time) {
+    std::vector<UiVertex> vertices;
+    vertices.reserve(8000);
+    const std::array<float, 4> glow{0.25f, 1.0f, 0.55f, 0.85f};
+    const std::array<float, 4> ember{0.95f, 0.18f, 0.055f, 0.90f};
+    const std::array<float, 4> blue{0.06f, 0.52f, 1.0f, 0.90f};
+    const std::array<float, 4> yellow{0.86f, 1.0f, 0.03f, 0.90f};
+    const std::array<float, 4> text{0.80f, 1.0f, 0.86f, 0.96f};
+    const std::array<float, 4> muted{0.36f, 0.62f, 0.50f, 0.92f};
+
+    addUiRect(vertices, 0.0f, 0.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f, 0.48f});
+    addUiTextCentered(vertices, 0.5f, 0.145f, 0.0054f, GameTitleCaps, {0.95f, 1.0f, 0.92f, 0.98f});
+    addUiRect(vertices, 0.32f, 0.205f, 0.36f, 0.006f, ember);
+
+    auto row = [&](int index, float y, std::array<float, 4> accent, const std::string& label, const std::string& value) {
+        const bool selected = selectedRow == index;
+        addUiRect(vertices, 0.23f, y, 0.54f, 0.080f, selected ? std::array<float, 4>{0.035f, 0.12f, 0.085f, 0.92f} : std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.58f});
+        addUiRect(vertices, 0.23f, y, 0.006f, 0.080f, selected ? glow : std::array<float, 4>{0.04f, 0.14f, 0.10f, 0.75f});
+        addUiText(vertices, 0.255f, y + 0.027f, 0.0039f, label, selected ? text : muted);
+        addUiText(vertices, 0.475f, y + 0.027f, 0.0039f, value, accent);
+    };
+
+    std::string mode = "FIRST TO 3";
+    if (gameType == GameType::PhasedTurns) mode = "10 TURNS";
+    if (gameType == GameType::AlternatingHunter) mode = "HUNTER";
+    std::string world = "DEAD";
+    if (theme == WorldTheme::Desert) world = "DESERT";
+    if (theme == WorldTheme::Lush) world = "LUSH";
+    if (theme == WorldTheme::Brutalist) world = "CITY";
+    row(0, 0.325f, ember, "GAME", mode);
+    row(1, 0.445f, blue, "WORLD", world);
+    row(2, 0.565f, yellow, "P2", p2Control == P2Control::Keyboard ? "KEYS" : "PAD");
+
+    const float pulse = 0.75f + std::sin(time * 4.0f) * 0.20f;
+    addUiTextCentered(vertices, 0.5f, 0.735f, 0.0041f, "ENTER TO START", {0.25f, 1.0f, 0.55f, pulse});
+    addUiTextCentered(vertices, 0.5f, 0.790f, 0.0032f, "UP DOWN   LEFT RIGHT", muted);
+
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    if (vertices.size() > MaxUiVertices) vertices.resize(MaxUiVertices);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
 void addHudDigit(std::vector<UiVertex>& vertices, float x, float y, float size, int digit, std::array<float, 4> color) {
     const float t = size * 0.16f;
     const float w = size * 0.62f;
     const float h = size;
-    if (digit == 1) {
-        addUiRect(vertices, x + w * 0.45f, y, t, h, color);
-        addUiRect(vertices, x + w * 0.18f, y + h * 0.82f, w * 0.34f, t, color);
-        addUiRect(vertices, x + w * 0.20f, y + h - t, w * 0.66f, t, color);
-    } else {
-        addUiRect(vertices, x, y, w, t, color);
-        addUiRect(vertices, x + w - t, y, t, h * 0.50f, color);
-        addUiRect(vertices, x, y + h * 0.42f, w, t, color);
-        addUiRect(vertices, x, y + h * 0.42f, t, h * 0.50f, color);
-        addUiRect(vertices, x, y + h - t, w, t, color);
-    }
+    const std::array<std::array<bool, 7>, 10> segments{{
+        {{true, true, true, false, true, true, true}},
+        {{false, false, true, false, false, true, false}},
+        {{true, false, true, true, true, false, true}},
+        {{true, false, true, true, false, true, true}},
+        {{false, true, true, true, false, true, false}},
+        {{true, true, false, true, false, true, true}},
+        {{true, true, false, true, true, true, true}},
+        {{true, false, true, false, false, true, false}},
+        {{true, true, true, true, true, true, true}},
+        {{true, true, true, true, false, true, true}}
+    }};
+    digit = std::clamp(digit, 0, 9);
+    const auto& s = segments[digit];
+    if (s[0]) addUiRect(vertices, x, y, w, t, color);
+    if (s[1]) addUiRect(vertices, x, y, t, h * 0.50f, color);
+    if (s[2]) addUiRect(vertices, x + w - t, y, t, h * 0.50f, color);
+    if (s[3]) addUiRect(vertices, x, y + h * 0.42f, w, t, color);
+    if (s[4]) addUiRect(vertices, x, y + h * 0.42f, t, h * 0.50f, color);
+    if (s[5]) addUiRect(vertices, x + w - t, y + h * 0.42f, t, h * 0.50f, color);
+    if (s[6]) addUiRect(vertices, x, y + h - t, w, t, color);
 }
 
 bool projectToUi(const Mat4& m, Vec3 p, Vec2& out) {
@@ -2417,6 +2622,42 @@ bool keyPressed(int key) {
     const int current = glfwGetKey(window, key);
     const bool pressed = current == GLFW_PRESS && previous[key] != GLFW_PRESS;
     previous[key] = current;
+    return pressed;
+}
+
+bool gamepadState(GLFWgamepadstate& state) {
+    return glfwJoystickIsGamepad(GLFW_JOYSTICK_1) && glfwGetGamepadState(GLFW_JOYSTICK_1, &state);
+}
+
+bool gamepadButtonPressed(int button) {
+    static std::array<unsigned char, GLFW_GAMEPAD_BUTTON_LAST + 1> previous{};
+    GLFWgamepadstate state{};
+    if (!gamepadState(state)) {
+        previous.fill(GLFW_RELEASE);
+        return false;
+    }
+    const bool pressed = state.buttons[button] == GLFW_PRESS && previous[button] != GLFW_PRESS;
+    previous[button] = state.buttons[button];
+    return pressed;
+}
+
+bool gamepadButtonDown(int button) {
+    GLFWgamepadstate state{};
+    return gamepadState(state) && state.buttons[button] == GLFW_PRESS;
+}
+
+float gamepadAxis(int axis) {
+    GLFWgamepadstate state{};
+    if (!gamepadState(state)) return 0.0f;
+    const float value = state.axes[axis];
+    return std::abs(value) > 0.18f ? value : 0.0f;
+}
+
+bool gamepadTriggerPressed(int axis) {
+    static std::array<bool, GLFW_GAMEPAD_AXIS_LAST + 1> previous{};
+    const bool down = gamepadAxis(axis) > 0.45f;
+    const bool pressed = down && !previous[axis];
+    previous[axis] = down;
     return pressed;
 }
 
@@ -2954,14 +3195,14 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
     glfwWindowHint(GLFW_SAMPLES, 0);
 
-    window = glfwCreateWindow(1280, 800, "Dead Cube World - WASD move, mouse look, click build/mine, R regenerate, F1 mouse", nullptr, nullptr);
+    window = glfwCreateWindow(1280, 800, "", nullptr, nullptr);
     if (!window) {
         glfwTerminate();
         return 1;
     }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
     World world;
     world.seed = randomPlanetSeed();
@@ -3035,6 +3276,9 @@ int main() {
     MatchState match;
     match.startedAt = lastTime;
     match.firstHunter = (world.seed & 1) ? 1 : 2;
+    GameScreen screen = GameScreen::Title;
+    P2Control p2Control = P2Control::Keyboard;
+    int titleRow = 0;
     auto resetMatch = [&](double now) {
         player.score = 0;
         playerTwo.score = 0;
@@ -3057,6 +3301,20 @@ int main() {
         blastTwo.active = false;
         satelliteFeedDirty = true;
     };
+    auto startGame = [&](double now) {
+        resetMatch(now);
+        screen = GameScreen::Playing;
+        mouseCaptured = true;
+        firstMouse = true;
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    };
+    auto rebuildSelectedWorld = [&](double now) {
+        generateWorld(world);
+        rebuildMeshes(world, opaque, transparentMesh);
+        forcefieldY = forcefieldPlaneY(world);
+        rebuildForcefieldMesh(world, forcefieldMesh);
+        resetMatch(now);
+    };
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -3068,6 +3326,47 @@ int main() {
 
         glfwPollEvents();
         if (keyPressed(GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
+        if (screen == GameScreen::Title) {
+            if (keyPressed(GLFW_KEY_UP) || keyPressed(GLFW_KEY_W) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_UP)) titleRow = (titleRow + 2) % 3;
+            if (keyPressed(GLFW_KEY_DOWN) || keyPressed(GLFW_KEY_S) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) titleRow = (titleRow + 1) % 3;
+            const bool previousChoice = keyPressed(GLFW_KEY_LEFT) || keyPressed(GLFW_KEY_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_LEFT);
+            const bool nextChoice = keyPressed(GLFW_KEY_RIGHT) || keyPressed(GLFW_KEY_D) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT);
+            if (previousChoice || nextChoice) {
+                if (titleRow == 0) match.type = previousChoice ? previousGameType(match.type) : nextGameType(match.type);
+                else if (titleRow == 1) {
+                    world.theme = previousChoice ? previousTheme(world.theme) : nextTheme(world.theme);
+                    world.seed += previousChoice ? 5297 : 7331;
+                    rebuildSelectedWorld(now);
+                } else {
+                    p2Control = p2Control == P2Control::Keyboard ? P2Control::Gamepad : P2Control::Keyboard;
+                }
+            }
+            if (keyPressed(GLFW_KEY_ENTER) || keyPressed(GLFW_KEY_SPACE) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_START)) {
+                startGame(now);
+            }
+
+            int width = 1;
+            int height = 1;
+            glfwGetFramebufferSize(window, &width, &height);
+            glViewport(0, 0, width, height);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glDisable(GL_DEPTH_TEST);
+            glUseProgram(skyProgram);
+            glUniform1f(skyTimeUniform, static_cast<float>(now));
+            glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
+            glBindVertexArray(emptyVao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            drawTitleScreen(uiProgram, uiVao, uiVbo, world.theme, match.type, p2Control, titleRow, static_cast<float>(now));
+            glDisable(GL_BLEND);
+            glEnable(GL_CULL_FACE);
+            glEnable(GL_DEPTH_TEST);
+            glfwSetWindowTitle(window, "");
+            glfwSwapBuffers(window);
+            continue;
+        }
         if (keyPressed(GLFW_KEY_F1)) {
             mouseCaptured = !mouseCaptured;
             firstMouse = true;
@@ -3089,7 +3388,7 @@ int main() {
             resetMatch(now);
         }
         if (keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode);
-        if (keyPressed(GLFW_KEY_P)) playerTwoToolMode = nextToolMode(playerTwoToolMode);
+        if (keyPressed(GLFW_KEY_P) || (p2Control == P2Control::Gamepad && gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_Y))) playerTwoToolMode = nextToolMode(playerTwoToolMode);
         if (keyPressed(GLFW_KEY_MINUS)) {
             targetSatelliteOrbitHeight = std::max(16.0f, targetSatelliteOrbitHeight - 8.0f);
             satelliteFeedDirty = true;
@@ -3154,7 +3453,7 @@ int main() {
 
         const bool missileGuided = rocket.active && rocket.age >= 1.0f;
         updatePlayer(world, player, dt, forcefieldY, p1CanMove && !missileGuided, p1CanMove);
-        updatePlayerTwo(world, playerTwo, dt, forcefieldY, p2CanMove);
+        updatePlayerTwo(world, playerTwo, dt, forcefieldY, p2CanMove, p2Control);
         const Vec3 eye{player.position.x, player.position.y + player.upSign * PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
         const Vec3 satellitePosition = satellitePositionAt(world, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
@@ -3186,7 +3485,9 @@ int main() {
         }
         static bool wasPlayerTwoFireDown = false;
         const bool playerTwoMissileMode = playerTwoToolMode == ToolMode::Missile || playerTwoToolMode == ToolMode::AtomicMissile;
-        const bool playerTwoFireDown = glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+        const bool playerTwoFireDown = p2Control == P2Control::Gamepad
+            ? (gamepadButtonDown(GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER) || gamepadAxis(GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.45f)
+            : glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
         const bool playerTwoFirePressed = p2CanAttack && playerTwoMissileMode && playerTwoFireDown && !wasPlayerTwoFireDown;
         wasPlayerTwoFireDown = p2CanAttack && playerTwoMissileMode && playerTwoFireDown;
         const Vec3 eyeTwoForFire{playerTwo.position.x, playerTwo.position.y + playerTwo.upSign * PlayerHeight * 0.88f, playerTwo.position.z};
@@ -3233,7 +3534,7 @@ int main() {
             applyToolDamage(world, playerTwo, true, player, rightDown ? 18 : 12);
             toolHitCooldown = 0.42f;
         }
-        const bool playerTwoToolSwing = playerTwoToolMode == ToolMode::MineBuild && glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+        const bool playerTwoToolSwing = playerTwoToolMode == ToolMode::MineBuild && playerTwoFireDown;
         if (p2CanAttack && playerTwoToolSwing && toolHitCooldownTwo <= 0.0f && rayHitsPlayer(eyeTwoForFire, lookTwoForFire, player, 4.0f)) {
             applyToolDamage(world, player, false, playerTwo, 12);
             toolHitCooldownTwo = 0.42f;
@@ -3475,18 +3776,7 @@ int main() {
             if (match.type == GameType::FirstToThree) modeSecondsRemaining = std::max(0, 600 - static_cast<int>(matchElapsed));
             else modeSecondsRemaining = std::max(0, 60 - static_cast<int>(static_cast<int>(matchElapsed) % 60));
         }
-        const std::string title = "Dead Cube World - " + std::string(themeName(world.theme)) + " - " + std::to_string(opaque.count / 6) + " faces - build: "
-            + buildTypeName(selectedBuild) + " - sat: " + orbitName(satelliteOrbit)
-            + " height " + std::to_string(static_cast<int>(targetSatelliteOrbitHeight))
-            + " - mode " + gameTypeName(match.type) + " " + turnPhaseName(match, now)
-            + (modeSecondsRemaining > 0 ? " " + std::to_string(modeSecondsRemaining) + "s" : "")
-            + " - P1 " + std::to_string(player.health) + "hp F" + std::to_string(player.fuel) + "/P" + std::to_string(player.plutonium)
-            + " P2 " + std::to_string(playerTwo.health) + "hp F" + std::to_string(playerTwo.fuel) + "/P" + std::to_string(playerTwo.plutonium)
-            + " - tools " + toolModeName(playerToolMode) + "/" + toolModeName(playerTwoToolMode)
-            + " score " + std::to_string(player.score) + "-" + std::to_string(playerTwo.score)
-            + (missileCameraActive ? " - missile nose cam" : "")
-            + " - seed " + std::to_string(world.seed) + " - hold click to mine/build";
-        glfwSetWindowTitle(window, title.c_str());
+        glfwSetWindowTitle(window, "");
         glfwSwapBuffers(window);
     }
 

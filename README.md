@@ -1,4 +1,4 @@
-# Dead Cube World
+# InterPlanetary 3D
 
 A bleak voxel-based, local 2 player duel inspired by Minecraft and Worms, but also WWI trench warefare, drone warfare in Ukraine, British government leafleting on domestic atomic bomb shelters, and the opening sequence of David Lynch's Eraserhead, all rendered with GLFW and modern OpenGL. The world is a six-faced cube planet under a low burning sky, with monochrome terrain, heavy ash fog, rare electric-blue fuel seams, toxic-yellow plutonium pockets, a dying scorched sun, and an orbiting satellite with a live downward camera feed.
 
@@ -7,12 +7,12 @@ A bleak voxel-based, local 2 player duel inspired by Minecraft and Worms, but al
 ```sh
 cmake -S . -B build
 cmake --build build
-./build/cube_world
+./build/InterPlanetary3D
 ```
 
 ## Controls
 
-The game runs in local two-player split-screen. Player 1 starts on the top face; player 2 starts on the opposite face. Each half of the screen has its own satellite feed.
+The game opens on a title screen. Use arrow keys or `WASD` to choose game type, world type, and whether player 2 uses keys or a gamepad, then press `Enter` or `Space` to start. The game runs in local two-player split-screen. Player 1 starts on the top face; player 2 starts on the opposite face. Each half of the screen has its own satellite feed.
 
 ### Player 1
 
@@ -46,3 +46,5 @@ The game runs in local two-player split-screen. Player 1 starts on the top face;
 - `P` to cycle mine/build, missile, and atomic missile modes
 - `Right Control` to fire the selected missile type
 - In mine/build mode, `Right Control` swings the tool at close range
+
+If player 2 is set to gamepad: left stick moves, right stick looks, `A` jumps, left bumper sprints, `Y` cycles tools, and right bumper/right trigger fires or swings.
