@@ -12,7 +12,7 @@ cmake --build build
 
 ## Controls
 
-The game opens on a title screen. Use arrow keys or `WASD` to choose game type, world type, and whether player 2 uses keys or a gamepad, then press `Enter` or `Space` to start. The game runs in local two-player split-screen. Player 1 starts on the top face; player 2 starts on the opposite face. Each half of the screen has its own satellite feed.
+The game opens on a title screen. Use arrow keys or `WASD` to choose game type, world type, whether player 2 uses keys or a gamepad, whether the forcefield is on, and whether weapons are all/missiles/shotguns, then press `Enter` or `Space` to start. The game runs in local two-player split-screen. Player 1 starts on the top face; player 2 starts on the opposite face. Each half of the screen has its own satellite feed.
 
 ### Player 1
 
@@ -25,7 +25,8 @@ The game opens on a title screen. Use arrow keys or `WASD` to choose game type, 
 - Hold right click to build against the highlighted face
 - The mining/building tool damages the other player at close range
 - `1-2` to select normal or hard building blocks
-- `M` to cycle mine/build, missile, and atomic missile modes
+- `M` to cycle mine/build and the enabled weapon modes
+- Left click in shotgun mode to fire a short-range block-breaking shotgun
 - Left click in missile or atomic missile mode to fire; after one second, the top-right feed switches to the missile nose camera
 - Rockets cost 1 fuel and 1 plutonium; atomic rockets cost 5 fuel and 5 plutonium
 - Mine fuel/plutonium or blast resource pockets to collect resources
@@ -40,8 +41,8 @@ The game opens on a title screen. Use arrow keys or `WASD` to choose game type, 
 - Arrow keys to look
 - `Enter` to jump
 - Hold `Right Shift` to sprint
-- `P` to cycle mine/build, missile, and atomic missile modes
-- `Right Control` to fire the selected missile type
+- `P` to cycle mine/build and the enabled weapon modes
+- `Right Control` to fire the selected shotgun or missile type
 - In mine/build mode, `Right Control` swings the tool at close range
 
 If player 2 is set to gamepad: left stick moves, right stick looks, `A` jumps, left bumper sprints, `Y` cycles tools, and right bumper/right trigger fires or swings.
