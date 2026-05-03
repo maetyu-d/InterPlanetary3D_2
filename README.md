@@ -12,7 +12,7 @@ cmake --build build
 
 ## Controls
 
-The game opens on a title screen. Use arrow keys or `WASD` to choose game type, world type, whether player 2 uses keys or a gamepad, whether the forcefield is on, and whether weapons are all/missiles/shotguns, then press `Enter` or `Space` to start. The game runs in local two-player split-screen. Player 1 starts on the top face; player 2 starts on the opposite face. Each half of the screen has its own satellite feed.
+The game opens on a title screen. Use arrow keys or `WASD` to choose game type, world type, whether player 2 uses keys or a gamepad, whether the forcefield is on, and whether weapons are all/missiles/shotguns, then press `Enter` or `Space` to start. Most modes run in local two-player split-screen; `1 SCR ALT` uses one shared screen that follows the active hunter. Player 1 starts on the top face; player 2 starts on the opposite face. Each player has a satellite feed in split-screen modes.
 
 ### Player 1
 
