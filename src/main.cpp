@@ -669,7 +669,7 @@ const char* gameTypeName(GameType type) {
         case GameType::FirstToThree: return "first to 3";
         case GameType::PhasedTurns: return "10-turn phases";
         case GameType::AlternatingHunter: return "alternating hunter";
-        case GameType::SingleScreenHunter: return "single screen hunter";
+        case GameType::SingleScreenHunter: return "1 screen alternate";
     }
     return "first to 3";
 }
@@ -2300,7 +2300,7 @@ void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme th
     std::string mode = "FIRST TO 3";
     if (gameType == GameType::PhasedTurns) mode = "10 TURNS";
     if (gameType == GameType::AlternatingHunter) mode = "HUNTER";
-    if (gameType == GameType::SingleScreenHunter) mode = "1 SCREEN";
+    if (gameType == GameType::SingleScreenHunter) mode = "1 SCR ALT";
     std::string world = "DEAD";
     if (theme == WorldTheme::Desert) world = "DESERT";
     if (theme == WorldTheme::Lush) world = "LUSH";
@@ -2330,7 +2330,7 @@ void drawMatchHud(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const MatchState
     std::string mode = "FIRST 3";
     if (match.type == GameType::PhasedTurns) mode = "10 TURNS";
     if (match.type == GameType::AlternatingHunter) mode = "HUNTER";
-    if (match.type == GameType::SingleScreenHunter) mode = "1 SCREEN";
+    if (match.type == GameType::SingleScreenHunter) mode = "1 SCR ALT";
 
     std::string phase = turnPhaseName(match, now);
     std::transform(phase.begin(), phase.end(), phase.begin(), [](unsigned char c) {
@@ -2410,7 +2410,7 @@ void drawMatchEndScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Matc
     std::string mode = "FIRST TO 3";
     if (match.type == GameType::PhasedTurns) mode = "10 TURNS";
     if (match.type == GameType::AlternatingHunter) mode = "HUNTER";
-    if (match.type == GameType::SingleScreenHunter) mode = "1 SCREEN";
+    if (match.type == GameType::SingleScreenHunter) mode = "1 SCR ALT";
     const std::string winner = match.winner == 1 ? "PLAYER 1 WINS" : "PLAYER 2 WINS";
     const std::string score = std::to_string(player.score) + " - " + std::to_string(playerTwo.score);
     const bool rematchSelected = choice == MatchEndChoice::Rematch;
