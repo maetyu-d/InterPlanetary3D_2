@@ -1,4 +1,5 @@
 build/
+build-win/
 .DS_Store
 *.o
 *.a

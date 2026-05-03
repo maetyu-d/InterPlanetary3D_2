@@ -1,10 +1,18 @@
 #define GLFW_INCLUDE_NONE
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <GL/gl.h>
+#endif
+
 #include <GLFW/glfw3.h>
 
 #if defined(__APPLE__)
 #include <OpenGL/gl3.h>
+#elif defined(_WIN32)
 #else
-#error "This sample uses the platform OpenGL 3.3 headers shipped with macOS."
+#error "This sample needs a platform OpenGL loader for this operating system."
 #endif
 
 #include <algorithm>
@@ -14,12 +22,155 @@
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
+#include <cstddef>
 #include <random>
 #include <string>
 #include <cctype>
 #include <vector>
 
 namespace {
+
+#if defined(_WIN32)
+using GLchar = char;
+using GLintptr = ptrdiff_t;
+using GLsizeiptr = ptrdiff_t;
+
+#ifndef GL_ARRAY_BUFFER
+#define GL_ARRAY_BUFFER 0x8892
+#define GL_STATIC_DRAW 0x88E4
+#define GL_DYNAMIC_DRAW 0x88E8
+#define GL_FRAGMENT_SHADER 0x8B30
+#define GL_VERTEX_SHADER 0x8B31
+#define GL_COMPILE_STATUS 0x8B81
+#define GL_LINK_STATUS 0x8B82
+#define GL_CLAMP_TO_EDGE 0x812F
+#define GL_FRAMEBUFFER 0x8D40
+#define GL_RENDERBUFFER 0x8D41
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_DEPTH_ATTACHMENT 0x8D00
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+#define GL_DEPTH_COMPONENT24 0x81A6
+#define GL_TEXTURE0 0x84C0
+#define GL_TEXTURE_WRAP_S 0x2802
+#define GL_TEXTURE_WRAP_T 0x2803
+#endif
+
+using PFNGLACTIVETEXTUREPROC = void (APIENTRY*)(GLenum);
+using PFNGLATTACHSHADERPROC = void (APIENTRY*)(GLuint, GLuint);
+using PFNGLBINDBUFFERPROC = void (APIENTRY*)(GLenum, GLuint);
+using PFNGLBINDFRAMEBUFFERPROC = void (APIENTRY*)(GLenum, GLuint);
+using PFNGLBINDRENDERBUFFERPROC = void (APIENTRY*)(GLenum, GLuint);
+using PFNGLBINDVERTEXARRAYPROC = void (APIENTRY*)(GLuint);
+using PFNGLBUFFERDATAPROC = void (APIENTRY*)(GLenum, GLsizeiptr, const void*, GLenum);
+using PFNGLBUFFERSUBDATAPROC = void (APIENTRY*)(GLenum, GLintptr, GLsizeiptr, const void*);
+using PFNGLCHECKFRAMEBUFFERSTATUSPROC = GLenum (APIENTRY*)(GLenum);
+using PFNGLCOMPILESHADERPROC = void (APIENTRY*)(GLuint);
+using PFNGLCREATEPROGRAMPROC = GLuint (APIENTRY*)();
+using PFNGLCREATESHADERPROC = GLuint (APIENTRY*)(GLenum);
+using PFNGLDELETESHADERPROC = void (APIENTRY*)(GLuint);
+using PFNGLENABLEVERTEXATTRIBARRAYPROC = void (APIENTRY*)(GLuint);
+using PFNGLFRAMEBUFFERRENDERBUFFERPROC = void (APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
+using PFNGLFRAMEBUFFERTEXTURE2DPROC = void (APIENTRY*)(GLenum, GLenum, GLenum, GLuint, GLint);
+using PFNGLGENBUFFERSPROC = void (APIENTRY*)(GLsizei, GLuint*);
+using PFNGLGENFRAMEBUFFERSPROC = void (APIENTRY*)(GLsizei, GLuint*);
+using PFNGLGENRENDERBUFFERSPROC = void (APIENTRY*)(GLsizei, GLuint*);
+using PFNGLGENVERTEXARRAYSPROC = void (APIENTRY*)(GLsizei, GLuint*);
+using PFNGLGETPROGRAMINFOLOGPROC = void (APIENTRY*)(GLuint, GLsizei, GLsizei*, GLchar*);
+using PFNGLGETPROGRAMIVPROC = void (APIENTRY*)(GLuint, GLenum, GLint*);
+using PFNGLGETSHADERINFOLOGPROC = void (APIENTRY*)(GLuint, GLsizei, GLsizei*, GLchar*);
+using PFNGLGETSHADERIVPROC = void (APIENTRY*)(GLuint, GLenum, GLint*);
+using PFNGLGETUNIFORMLOCATIONPROC = GLint (APIENTRY*)(GLuint, const GLchar*);
+using PFNGLLINKPROGRAMPROC = void (APIENTRY*)(GLuint);
+using PFNGLRENDERBUFFERSTORAGEPROC = void (APIENTRY*)(GLenum, GLenum, GLsizei, GLsizei);
+using PFNGLSHADERSOURCEPROC = void (APIENTRY*)(GLuint, GLsizei, const GLchar* const*, const GLint*);
+using PFNGLUNIFORM1FPROC = void (APIENTRY*)(GLint, GLfloat);
+using PFNGLUNIFORM1IPROC = void (APIENTRY*)(GLint, GLint);
+using PFNGLUNIFORM3FPROC = void (APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat);
+using PFNGLUNIFORM4FPROC = void (APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+using PFNGLUNIFORMMATRIX4FVPROC = void (APIENTRY*)(GLint, GLsizei, GLboolean, const GLfloat*);
+using PFNGLUSEPROGRAMPROC = void (APIENTRY*)(GLuint);
+using PFNGLVERTEXATTRIBPOINTERPROC = void (APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
+
+PFNGLACTIVETEXTUREPROC glActiveTexture = nullptr;
+PFNGLATTACHSHADERPROC glAttachShader = nullptr;
+PFNGLBINDBUFFERPROC glBindBuffer = nullptr;
+PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
+PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer = nullptr;
+PFNGLBINDVERTEXARRAYPROC glBindVertexArray = nullptr;
+PFNGLBUFFERDATAPROC glBufferData = nullptr;
+PFNGLBUFFERSUBDATAPROC glBufferSubData = nullptr;
+PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus = nullptr;
+PFNGLCOMPILESHADERPROC glCompileShader = nullptr;
+PFNGLCREATEPROGRAMPROC glCreateProgram = nullptr;
+PFNGLCREATESHADERPROC glCreateShader = nullptr;
+PFNGLDELETESHADERPROC glDeleteShader = nullptr;
+PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray = nullptr;
+PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = nullptr;
+PFNGLFRAMEBUFFERTEXTURE2DPROC glFramebufferTexture2D = nullptr;
+PFNGLGENBUFFERSPROC glGenBuffers = nullptr;
+PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers = nullptr;
+PFNGLGENRENDERBUFFERSPROC glGenRenderbuffers = nullptr;
+PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
+PFNGLGETPROGRAMINFOLOGPROC glGetProgramInfoLog = nullptr;
+PFNGLGETPROGRAMIVPROC glGetProgramiv = nullptr;
+PFNGLGETSHADERINFOLOGPROC glGetShaderInfoLog = nullptr;
+PFNGLGETSHADERIVPROC glGetShaderiv = nullptr;
+PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = nullptr;
+PFNGLLINKPROGRAMPROC glLinkProgram = nullptr;
+PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage = nullptr;
+PFNGLSHADERSOURCEPROC glShaderSource = nullptr;
+PFNGLUNIFORM1FPROC glUniform1f = nullptr;
+PFNGLUNIFORM1IPROC glUniform1i = nullptr;
+PFNGLUNIFORM3FPROC glUniform3f = nullptr;
+PFNGLUNIFORM4FPROC glUniform4f = nullptr;
+PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = nullptr;
+PFNGLUSEPROGRAMPROC glUseProgram = nullptr;
+PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = nullptr;
+
+bool loadOpenGLFunctions() {
+    bool ok = true;
+#define LOAD_GL(name) do { name = reinterpret_cast<decltype(name)>(glfwGetProcAddress(#name)); ok = ok && name; } while (false)
+    LOAD_GL(glActiveTexture);
+    LOAD_GL(glAttachShader);
+    LOAD_GL(glBindBuffer);
+    LOAD_GL(glBindFramebuffer);
+    LOAD_GL(glBindRenderbuffer);
+    LOAD_GL(glBindVertexArray);
+    LOAD_GL(glBufferData);
+    LOAD_GL(glBufferSubData);
+    LOAD_GL(glCheckFramebufferStatus);
+    LOAD_GL(glCompileShader);
+    LOAD_GL(glCreateProgram);
+    LOAD_GL(glCreateShader);
+    LOAD_GL(glDeleteShader);
+    LOAD_GL(glEnableVertexAttribArray);
+    LOAD_GL(glFramebufferRenderbuffer);
+    LOAD_GL(glFramebufferTexture2D);
+    LOAD_GL(glGenBuffers);
+    LOAD_GL(glGenFramebuffers);
+    LOAD_GL(glGenRenderbuffers);
+    LOAD_GL(glGenVertexArrays);
+    LOAD_GL(glGetProgramInfoLog);
+    LOAD_GL(glGetProgramiv);
+    LOAD_GL(glGetShaderInfoLog);
+    LOAD_GL(glGetShaderiv);
+    LOAD_GL(glGetUniformLocation);
+    LOAD_GL(glLinkProgram);
+    LOAD_GL(glRenderbufferStorage);
+    LOAD_GL(glShaderSource);
+    LOAD_GL(glUniform1f);
+    LOAD_GL(glUniform1i);
+    LOAD_GL(glUniform3f);
+    LOAD_GL(glUniform4f);
+    LOAD_GL(glUniformMatrix4fv);
+    LOAD_GL(glUseProgram);
+    LOAD_GL(glVertexAttribPointer);
+#undef LOAD_GL
+    return ok;
+}
+#else
+bool loadOpenGLFunctions() { return true; }
+#endif
 
 constexpr int WorldSize = 72;
 constexpr int WorldHeight = WorldSize;
@@ -3498,6 +3649,11 @@ int main() {
         return 1;
     }
     glfwMakeContextCurrent(window);
+    if (!loadOpenGLFunctions()) {
+        std::fprintf(stderr, "Failed to load OpenGL 3.3 functions.\n");
+        glfwTerminate();
+        return 1;
+    }
     glfwSwapInterval(1);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
