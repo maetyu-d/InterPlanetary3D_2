@@ -2413,15 +2413,15 @@ void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool minin
     std::vector<UiVertex> vertices;
     vertices.reserve(160);
     if (impact > 0.0f) {
-        addUiRect(vertices, 0.0f, 0.0f, 1.0f, 0.075f * impact, {1.0f, 0.46f, 0.08f, 0.26f * impact});
-        addUiRect(vertices, 0.0f, 0.930f - 0.035f * impact, 1.0f, 0.105f * impact, {1.0f, 0.30f, 0.05f, 0.24f * impact});
-        addUiRect(vertices, 0.0f, 0.0f, 0.070f * impact, 1.0f, {1.0f, 0.28f, 0.04f, 0.18f * impact});
-        addUiRect(vertices, 0.930f - 0.030f * impact, 0.0f, 0.105f * impact, 1.0f, {1.0f, 0.28f, 0.04f, 0.18f * impact});
-        for (int i = 0; i < 14; ++i) {
+        addUiRect(vertices, 0.0f, 0.0f, 1.0f, 0.055f * impact, {0.020f, 0.018f, 0.014f, 0.22f * impact});
+        addUiRect(vertices, 0.0f, 0.945f - 0.025f * impact, 1.0f, 0.080f * impact, {0.020f, 0.017f, 0.013f, 0.20f * impact});
+        addUiRect(vertices, 0.0f, 0.0f, 0.050f * impact, 1.0f, {0.018f, 0.016f, 0.013f, 0.16f * impact});
+        addUiRect(vertices, 0.950f - 0.022f * impact, 0.0f, 0.075f * impact, 1.0f, {0.018f, 0.016f, 0.013f, 0.16f * impact});
+        for (int i = 0; i < 10; ++i) {
             const float a = static_cast<float>(i) * 0.448799f + time * 3.0f;
             const float r = 0.050f + (1.0f - impact) * 0.050f + 0.010f * static_cast<float>(i % 4);
-            const float s = 0.004f + impact * 0.006f;
-            addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {1.0f, 0.62f, 0.12f, impact * 0.55f});
+            const float s = 0.003f + impact * 0.004f;
+            addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {0.50f, 0.44f, 0.34f, impact * 0.34f});
         }
     }
     if (mining) {
