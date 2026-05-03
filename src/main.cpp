@@ -3335,11 +3335,15 @@ void main() {
     }
 
     vec3 local = abs(fract(p) - 0.5);
-    float edge = 1.0 - smoothstep(0.38, 0.50, max(max(local.x, local.y), local.z));
+    float edgeDistance = max(max(local.x, local.y), local.z);
+    float edge = 1.0 - smoothstep(0.38, 0.50, edgeDistance);
+    float bevel = smoothstep(0.34, 0.50, edgeDistance);
+    float bevelCore = smoothstep(0.43, 0.50, edgeDistance);
     float cornerDirt = smoothstep(0.38, 0.50, min(min(local.x, local.y), local.z));
     float faceAO = mix(0.66, 1.03, edge);
     faceAO *= 0.78 + 0.22 * clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
     faceAO *= 1.0 - cornerDirt * 0.16 * (1.0 - polishedBlock);
+    faceAO *= 1.0 - bevelCore * 0.16 * roughBlock;
 
     float sun = max(dot(n, normalize(-uSunDir)), 0.0);
     float sky = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
@@ -3366,8 +3370,11 @@ void main() {
     float sunSpec = pow(max(dot(n, halfSun), 0.0), mix(18.0, 56.0, polished)) * (0.08 + polished * 0.28 + hardSurface * 0.08);
     float lampSpec = pow(max(dot(n, halfLamp), 0.0), mix(16.0, 64.0, polished)) * cone * falloff * (0.34 + polished * 1.15);
     color += vec3(1.0, 0.94, 0.78) * sunSpec + vec3(0.84, 0.92, 1.0) * lampSpec;
-    if (kind == 10.0) color += base * 1.65 + vec3(0.0, 0.70, 1.05) * edge + vec3(0.00, 0.38, 0.62) * (1.0 - cornerDirt);
-    if (kind == 11.0) color += base * 1.35 + vec3(0.90, 1.05, 0.0) * edge + vec3(0.55, 0.62, 0.00) * (1.0 - cornerDirt);
+    color += vec3(0.18, 0.15, 0.11) * bevel * sun * (0.40 + hardSurface * 0.32);
+    color += vec3(0.34, 0.42, 0.46) * bevel * cone * falloff * (0.55 + polishedBlock * 1.15);
+    color = mix(color, color * vec3(0.78, 0.80, 0.82), bevelCore * 0.18 * (1.0 - polishedBlock));
+    if (kind == 10.0) color += base * 1.65 + vec3(0.0, 0.70, 1.05) * edge + vec3(0.00, 0.38, 0.62) * (1.0 - cornerDirt) + vec3(0.0, 0.65, 0.95) * bevel;
+    if (kind == 11.0) color += base * 1.35 + vec3(0.90, 1.05, 0.0) * edge + vec3(0.55, 0.62, 0.00) * (1.0 - cornerDirt) + vec3(0.75, 0.86, 0.0) * bevel;
     float distanceToEye = length(uCamera - vWorldPos);
     float distanceFog = smoothstep(18.0, 70.0, distanceToEye) * mix(1.0, 0.28, uFeedClarity);
     float lowFog = (1.0 - smoothstep(4.0, 24.0, vWorldPos.y)) * smoothstep(5.0, 45.0, distanceToEye) * mix(1.0, 0.18, uFeedClarity);
@@ -3407,14 +3414,21 @@ void main() {
     if (sideFace && kind < 10.0) {
         base = mix(base, vec3(0.020, 0.130, 0.075), 0.78);
     }
-    float light = 0.44 + max(dot(n, normalize(vec3(-0.35, 0.75, -0.25))), 0.0) * 0.48;
-    float grid = 1.0 - smoothstep(0.45, 0.50, max(max(abs(fract(vWorldPos.x) - 0.5), abs(fract(vWorldPos.y) - 0.5)), abs(fract(vWorldPos.z) - 0.5)));
-    vec3 color = base * light + grid * 0.030;
-    if (kind == 10.0) color = mix(color, vec3(0.00, 0.92, 1.0), 0.72) + vec3(0.00, 0.45, 0.70) * grid;
-    if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.68) + vec3(0.50, 0.55, 0.00) * grid;
+    vec3 lightDir = normalize(vec3(-0.35, 0.75, -0.25));
+    float light = 0.42 + max(dot(n, lightDir), 0.0) * 0.58;
+    vec3 cell = abs(fract(vWorldPos) - 0.5);
+    float grid = 1.0 - smoothstep(0.43, 0.50, max(max(cell.x, cell.y), cell.z));
+    float bevel = smoothstep(0.36, 0.50, max(max(cell.x, cell.y), cell.z));
+    vec3 viewDir = normalize(uCamera - vWorldPos);
+    float glint = pow(max(1.0 - dot(viewDir, n), 0.0), 2.0) * 0.16;
+    vec3 color = base * light + grid * 0.038 + bevel * vec3(0.030, 0.040, 0.035) + glint;
+    if (kind == 10.0) color = mix(color, vec3(0.00, 0.96, 1.0), 0.78) + vec3(0.00, 0.58, 0.82) * (grid + bevel);
+    if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.74) + vec3(0.62, 0.68, 0.00) * (grid + bevel);
     if (kind >= 12.0 && kind <= 14.0) color = mix(color, base * 1.22, 0.38);
     float dist = length(uCamera - vWorldPos);
     color *= 1.0 - smoothstep(70.0, 145.0, dist) * 0.35;
+    color = color / (color + vec3(0.55));
+    color = pow(max(color, vec3(0.0)), vec3(0.86));
     FragColor = vec4(color, 1.0);
 }
 )GLSL";
