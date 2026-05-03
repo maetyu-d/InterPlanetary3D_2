@@ -207,6 +207,12 @@ enum class ToolMode {
     AtomicMissile
 };
 
+enum class WeaponMode {
+    All,
+    MissilesOnly,
+    ShotgunsOnly
+};
+
 enum class GameType {
     FirstToThree,
     PhasedTurns,
@@ -577,11 +583,26 @@ SatelliteOrbit nextOrbit(SatelliteOrbit orbit) {
     return SatelliteOrbit::CurrentFace;
 }
 
-ToolMode nextToolMode(ToolMode mode) {
+bool weaponAllowsTool(WeaponMode weapons, ToolMode tool) {
+    if (tool == ToolMode::MineBuild) return true;
+    if (weapons == WeaponMode::All) return true;
+    if (weapons == WeaponMode::MissilesOnly) return tool == ToolMode::Missile || tool == ToolMode::AtomicMissile;
+    if (weapons == WeaponMode::ShotgunsOnly) return tool == ToolMode::Shotgun;
+    return true;
+}
+
+ToolMode nextToolMode(ToolMode mode, WeaponMode weapons) {
     switch (mode) {
-        case ToolMode::MineBuild: return ToolMode::Shotgun;
-        case ToolMode::Shotgun: return ToolMode::Missile;
-        case ToolMode::Missile: return ToolMode::AtomicMissile;
+        case ToolMode::MineBuild:
+            if (weaponAllowsTool(weapons, ToolMode::Shotgun)) return ToolMode::Shotgun;
+            if (weaponAllowsTool(weapons, ToolMode::Missile)) return ToolMode::Missile;
+            return ToolMode::MineBuild;
+        case ToolMode::Shotgun:
+            if (weaponAllowsTool(weapons, ToolMode::Missile)) return ToolMode::Missile;
+            return ToolMode::MineBuild;
+        case ToolMode::Missile:
+            if (weaponAllowsTool(weapons, ToolMode::AtomicMissile)) return ToolMode::AtomicMissile;
+            return ToolMode::MineBuild;
         case ToolMode::AtomicMissile: return ToolMode::MineBuild;
     }
     return ToolMode::MineBuild;
@@ -595,6 +616,33 @@ const char* toolModeName(ToolMode mode) {
         case ToolMode::AtomicMissile: return "atomic";
     }
     return "mine/build";
+}
+
+WeaponMode nextWeaponMode(WeaponMode mode) {
+    switch (mode) {
+        case WeaponMode::All: return WeaponMode::MissilesOnly;
+        case WeaponMode::MissilesOnly: return WeaponMode::ShotgunsOnly;
+        case WeaponMode::ShotgunsOnly: return WeaponMode::All;
+    }
+    return WeaponMode::All;
+}
+
+WeaponMode previousWeaponMode(WeaponMode mode) {
+    switch (mode) {
+        case WeaponMode::All: return WeaponMode::ShotgunsOnly;
+        case WeaponMode::MissilesOnly: return WeaponMode::All;
+        case WeaponMode::ShotgunsOnly: return WeaponMode::MissilesOnly;
+    }
+    return WeaponMode::All;
+}
+
+const char* weaponModeName(WeaponMode mode) {
+    switch (mode) {
+        case WeaponMode::All: return "ALL";
+        case WeaponMode::MissilesOnly: return "MISSILES";
+        case WeaponMode::ShotgunsOnly: return "SHOTGUNS";
+    }
+    return "ALL";
 }
 
 GameType nextGameType(GameType type) {
@@ -1428,7 +1476,7 @@ Vec3 rotateAroundAxis(Vec3 v, Vec3 axis, float angle) {
 bool gamepadButtonDown(int button);
 float gamepadAxis(int axis);
 
-void updatePlayer(const World& world, Player& player, float dt, float forcefieldY, bool allowLook = true, bool allowMove = true) {
+void updatePlayer(const World& world, Player& player, float dt, float forcefieldY, bool forcefieldEnabled, bool allowLook = true, bool allowMove = true) {
     if (allowLook) {
         player.lookVelocityX = player.lookVelocityX * 0.42f + pendingMouseLook.x * 0.58f;
         player.lookVelocityY = player.lookVelocityY * 0.42f + pendingMouseLook.y * 0.58f;
@@ -1497,14 +1545,14 @@ void updatePlayer(const World& world, Player& player, float dt, float forcefield
     const float verticalVelocity = player.velocity.y;
     const bool hitVertical = moveAxis(world, player, player.position.y, player.velocity.y * dt);
     player.grounded = hitVertical && verticalVelocity * player.upSign <= 0.0f && beforeY * player.upSign > player.position.y * player.upSign - 0.0001f;
-    enforceForcefield(player, forcefieldY);
+    if (forcefieldEnabled) enforceForcefield(player, forcefieldY);
 
     if ((player.upSign > 0.0f && player.position.y < -4.0f) || (player.upSign < 0.0f && player.position.y > WorldHeight + 4.0f)) {
         respawnPlayer(world, player, player.upSign < 0.0f);
     }
 }
 
-void updatePlayerTwo(const World& world, Player& player, float dt, float forcefieldY, bool allowInput = true, P2Control control = P2Control::Keyboard) {
+void updatePlayerTwo(const World& world, Player& player, float dt, float forcefieldY, bool forcefieldEnabled, bool allowInput = true, P2Control control = P2Control::Keyboard) {
     if (!allowInput) {
         player.velocity = {};
         player.jumpWasDown = false;
@@ -1577,7 +1625,7 @@ void updatePlayerTwo(const World& world, Player& player, float dt, float forcefi
     const float verticalVelocity = player.velocity.y;
     const bool hitVertical = moveAxis(world, player, player.position.y, player.velocity.y * dt);
     player.grounded = hitVertical && verticalVelocity * player.upSign <= 0.0f && beforeY * player.upSign > player.position.y * player.upSign - 0.0001f;
-    enforceForcefield(player, forcefieldY);
+    if (forcefieldEnabled) enforceForcefield(player, forcefieldY);
 
     if ((player.upSign > 0.0f && player.position.y < -4.0f) || (player.upSign < 0.0f && player.position.y > WorldHeight + 4.0f)) {
         respawnPlayer(world, player, player.upSign < 0.0f);
@@ -2209,7 +2257,7 @@ void drawPlayerStatus(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Player
 
 void addHudDigit(std::vector<UiVertex>& vertices, float x, float y, float size, int digit, std::array<float, 4> color);
 
-void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme theme, GameType gameType, P2Control p2Control, int selectedRow, float time) {
+void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme theme, GameType gameType, P2Control p2Control, bool forcefieldEnabled, WeaponMode weaponMode, int selectedRow, float time) {
     std::vector<UiVertex> vertices;
     vertices.reserve(8000);
     const std::array<float, 4> glow{0.25f, 1.0f, 0.55f, 0.85f};
@@ -2238,13 +2286,15 @@ void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme th
     if (theme == WorldTheme::Desert) world = "DESERT";
     if (theme == WorldTheme::Lush) world = "LUSH";
     if (theme == WorldTheme::Brutalist) world = "CITY";
-    row(0, 0.325f, ember, "GAME", mode);
-    row(1, 0.445f, blue, "WORLD", world);
-    row(2, 0.565f, yellow, "P2", p2Control == P2Control::Keyboard ? "KEYS" : "PAD");
+    row(0, 0.275f, ember, "GAME", mode);
+    row(1, 0.375f, blue, "WORLD", world);
+    row(2, 0.475f, yellow, "P2", p2Control == P2Control::Keyboard ? "KEYS" : "PAD");
+    row(3, 0.575f, glow, "FIELD", forcefieldEnabled ? "ON" : "OFF");
+    row(4, 0.675f, ember, "WEAPON", weaponModeName(weaponMode));
 
     const float pulse = 0.75f + std::sin(time * 4.0f) * 0.20f;
-    addUiTextCentered(vertices, 0.5f, 0.735f, 0.0041f, "ENTER TO START", {0.25f, 1.0f, 0.55f, pulse});
-    addUiTextCentered(vertices, 0.5f, 0.790f, 0.0032f, "UP DOWN   LEFT RIGHT", muted);
+    addUiTextCentered(vertices, 0.5f, 0.805f, 0.0041f, "ENTER TO START", {0.25f, 1.0f, 0.55f, pulse});
+    addUiTextCentered(vertices, 0.5f, 0.860f, 0.0032f, "UP DOWN   LEFT RIGHT", muted);
 
     glUseProgram(uiProgram);
     glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
@@ -3465,6 +3515,8 @@ int main() {
     match.firstHunter = (world.seed & 1) ? 1 : 2;
     GameScreen screen = GameScreen::Title;
     P2Control p2Control = P2Control::Keyboard;
+    bool forcefieldEnabled = true;
+    WeaponMode weaponMode = WeaponMode::All;
     int titleRow = 0;
     bool quitPrompt = false;
     QuitChoice quitChoice = QuitChoice::No;
@@ -3499,6 +3551,8 @@ int main() {
     auto startGame = [&]() {
         gameTime = 0.0;
         resetMatch(gameTime);
+        playerToolMode = ToolMode::MineBuild;
+        playerTwoToolMode = ToolMode::MineBuild;
         screen = GameScreen::Playing;
         quitPrompt = false;
         quitChoice = QuitChoice::No;
@@ -3525,8 +3579,8 @@ int main() {
         glfwPollEvents();
         if (screen == GameScreen::Title) {
             if (keyPressed(GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
-            if (keyPressed(GLFW_KEY_UP) || keyPressed(GLFW_KEY_W) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_UP)) titleRow = (titleRow + 2) % 3;
-            if (keyPressed(GLFW_KEY_DOWN) || keyPressed(GLFW_KEY_S) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) titleRow = (titleRow + 1) % 3;
+            if (keyPressed(GLFW_KEY_UP) || keyPressed(GLFW_KEY_W) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_UP)) titleRow = (titleRow + 4) % 5;
+            if (keyPressed(GLFW_KEY_DOWN) || keyPressed(GLFW_KEY_S) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) titleRow = (titleRow + 1) % 5;
             const bool previousChoice = keyPressed(GLFW_KEY_LEFT) || keyPressed(GLFW_KEY_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_LEFT);
             const bool nextChoice = keyPressed(GLFW_KEY_RIGHT) || keyPressed(GLFW_KEY_D) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT);
             if (previousChoice || nextChoice) {
@@ -3535,8 +3589,12 @@ int main() {
                     world.theme = previousChoice ? previousTheme(world.theme) : nextTheme(world.theme);
                     world.seed += previousChoice ? 5297 : 7331;
                     rebuildSelectedWorld();
-                } else {
+                } else if (titleRow == 2) {
                     p2Control = p2Control == P2Control::Keyboard ? P2Control::Gamepad : P2Control::Keyboard;
+                } else if (titleRow == 3) {
+                    forcefieldEnabled = !forcefieldEnabled;
+                } else {
+                    weaponMode = previousChoice ? previousWeaponMode(weaponMode) : nextWeaponMode(weaponMode);
                 }
             }
             if (keyPressed(GLFW_KEY_ENTER) || keyPressed(GLFW_KEY_SPACE) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_START)) {
@@ -3557,7 +3615,7 @@ int main() {
             glDisable(GL_CULL_FACE);
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            drawTitleScreen(uiProgram, uiVao, uiVbo, world.theme, match.type, p2Control, titleRow, static_cast<float>(now));
+            drawTitleScreen(uiProgram, uiVao, uiVbo, world.theme, match.type, p2Control, forcefieldEnabled, weaponMode, titleRow, static_cast<float>(now));
             glDisable(GL_BLEND);
             glEnable(GL_CULL_FACE);
             glEnable(GL_DEPTH_TEST);
@@ -3610,8 +3668,8 @@ int main() {
         }
         if (!gamePaused && keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
         if (!gamePaused && keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
-        if (!gamePaused && keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode);
-        if (!gamePaused && (keyPressed(GLFW_KEY_P) || (p2Control == P2Control::Gamepad && gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_Y)))) playerTwoToolMode = nextToolMode(playerTwoToolMode);
+        if (!gamePaused && keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode, weaponMode);
+        if (!gamePaused && (keyPressed(GLFW_KEY_P) || (p2Control == P2Control::Gamepad && gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_Y)))) playerTwoToolMode = nextToolMode(playerTwoToolMode, weaponMode);
         if (!gamePaused && keyPressed(GLFW_KEY_MINUS)) {
             targetSatelliteOrbitHeight = std::max(16.0f, targetSatelliteOrbitHeight - 8.0f);
             satelliteFeedDirty = true;
@@ -3667,8 +3725,8 @@ int main() {
         const bool p2CanAttack = p2CanAct && (match.type != GameType::PhasedTurns || match.suddenDeath || phasedAttackTurn);
 
         const bool missileGuided = rocket.active && rocket.age >= 1.0f;
-        updatePlayer(world, player, simDt, forcefieldY, p1CanMove && !missileGuided, p1CanMove && !gamePaused);
-        updatePlayerTwo(world, playerTwo, simDt, forcefieldY, p2CanMove && !gamePaused, p2Control);
+        updatePlayer(world, player, simDt, forcefieldY, forcefieldEnabled, p1CanMove && !missileGuided, p1CanMove && !gamePaused);
+        updatePlayerTwo(world, playerTwo, simDt, forcefieldY, forcefieldEnabled, p2CanMove && !gamePaused, p2Control);
         const Vec3 eye{player.position.x, player.position.y + player.upSign * PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
         const Vec3 satellitePosition = satellitePositionAt(world, renderTime, satelliteOrbit, satelliteOrbitHeight);
@@ -3883,11 +3941,11 @@ int main() {
                 const Mat4 missileView = lookAt(missileEye, missileTarget, rocket.up);
                 const Mat4 missileVp = multiply(missileProj, missileView);
                 drawVoxelScene(voxelUniform, missileVp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, missileEye, rocket.direction, renderTime, 1.0f, true);
-                drawForcefield(forcefieldUniform, forcefieldMesh, missileVp, renderTime, 1.0f);
+                if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, missileVp, renderTime, 1.0f);
             } else {
                 const SatelliteView satelliteView = makeSatelliteView(satellitePosition);
                 drawVoxelScene(satelliteUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, renderTime, 0.0f, false);
-                drawForcefield(forcefieldUniform, forcefieldMesh, satelliteView.vp, renderTime, 0.45f);
+                if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, satelliteView.vp, renderTime, 0.45f);
                 glDisable(GL_DEPTH_TEST);
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -3909,7 +3967,7 @@ int main() {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo);
             drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, renderTime, 0.0f, false);
-            drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, renderTime, 0.45f);
+            if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, renderTime, 0.45f);
             glDisable(GL_DEPTH_TEST);
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -3941,7 +3999,7 @@ int main() {
 
         const Rocket& visibleRocket = rocket.active ? rocket : rocketTwo;
         drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eye, look, renderTime);
-        drawForcefield(forcefieldUniform, forcefieldMesh, vp, renderTime);
+        if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vp, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight);
@@ -3999,7 +4057,7 @@ int main() {
         const Mat4 viewTwo = lookAt(eyeTwo, eyeTwo + lookTwo, {0.0f, playerTwo.upSign, 0.0f});
         const Mat4 vpTwo = multiply(projTwo, viewTwo);
         drawVoxelScene(voxelUniform, vpTwo, opaque, transparentMesh, &satelliteMesh, satellitePositionTwo, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eyeTwo, lookTwo, renderTime);
-        drawForcefield(forcefieldUniform, forcefieldMesh, vpTwo, renderTime);
+        if (forcefieldEnabled) drawForcefield(forcefieldUniform, forcefieldMesh, vpTwo, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, renderTime + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
