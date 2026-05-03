@@ -2399,6 +2399,44 @@ void drawSmallReticle(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool alterna
     glBindVertexArray(0);
 }
 
+void drawMiningFeedback(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, float progress, float impact, float time) {
+    if (!mining && impact <= 0.0f) return;
+    progress = std::clamp(progress, 0.0f, 1.0f);
+    impact = std::clamp(impact, 0.0f, 1.0f);
+    const float bite = mining ? std::pow(progress, 1.7f) : 0.0f;
+    const float pulse = 0.55f + 0.45f * std::sin(time * 42.0f);
+    std::vector<UiVertex> vertices;
+    vertices.reserve(160);
+    if (impact > 0.0f) {
+        addUiRect(vertices, 0.0f, 0.0f, 1.0f, 0.055f * impact, {1.0f, 0.44f, 0.08f, 0.20f * impact});
+        addUiRect(vertices, 0.0f, 0.945f - 0.030f * impact, 1.0f, 0.085f * impact, {1.0f, 0.34f, 0.06f, 0.18f * impact});
+        addUiRect(vertices, 0.0f, 0.0f, 0.050f * impact, 1.0f, {1.0f, 0.30f, 0.05f, 0.12f * impact});
+        addUiRect(vertices, 0.950f - 0.025f * impact, 0.0f, 0.075f * impact, 1.0f, {1.0f, 0.30f, 0.05f, 0.12f * impact});
+    }
+    if (mining) {
+        const std::array<float, 4> hot{1.0f, 0.58f + pulse * 0.25f, 0.18f, 0.28f + bite * 0.34f};
+        const float gap = 0.022f - bite * 0.008f;
+        const float len = 0.018f + bite * 0.042f;
+        const float thick = 0.002f + bite * 0.003f;
+        addUiRect(vertices, 0.5f - thick * 0.5f, 0.5f - gap - len, thick, len, hot);
+        addUiRect(vertices, 0.5f - thick * 0.5f, 0.5f + gap, thick, len, hot);
+        addUiRect(vertices, 0.5f - gap - len, 0.5f - thick * 0.5f, len, thick, hot);
+        addUiRect(vertices, 0.5f + gap, 0.5f - thick * 0.5f, len, thick, hot);
+        for (int i = 0; i < 8; ++i) {
+            const float a = static_cast<float>(i) * 0.785398f + time * 0.8f;
+            const float r = 0.030f + bite * (0.032f + 0.006f * static_cast<float>(i % 3));
+            const float s = 0.0026f + bite * 0.003f;
+            addUiRect(vertices, 0.5f + std::cos(a) * r, 0.5f + std::sin(a) * r, s, s, {1.0f, 0.50f, 0.10f, bite * 0.42f});
+        }
+    }
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
 void drawPlayerStatus(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const Player& player, bool alternatePalette = false) {
     std::vector<UiVertex> vertices;
     vertices.reserve(96);
@@ -2726,7 +2764,7 @@ void drawSelection(const LineUniforms& lineUniforms, GLuint lineVao, GLuint line
     const std::array<Vec3, 8> p{{{x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0}, {x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}}};
     const std::array<int, 24> e{{0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7}};
     std::vector<float> data;
-    data.reserve(3 * 96);
+    data.reserve(3 * 180);
     auto addLine = [&data](Vec3 a, Vec3 b) {
         data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
         data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
@@ -2773,17 +2811,39 @@ void drawSelection(const LineUniforms& lineUniforms, GLuint lineVao, GLuint line
         if (piece > 0.0f) addLine(ring[i], ring[i] + (ring[(i + 1) % 4] - ring[i]) * piece);
         remaining -= 1.0f;
     }
+    if (!building) {
+        const Vec3 u = f1 - f0;
+        const Vec3 v = f3 - f0;
+        const Vec3 center = f0 + u * 0.5f + v * 0.5f;
+        const float fracture = std::clamp(progress, 0.0f, 1.0f);
+        const int crackCount = static_cast<int>(fracture * 9.0f);
+        for (int i = 0; i < crackCount; ++i) {
+            const float a = static_cast<float>(i) * 2.39996f + time * 0.035f;
+            const float len = (0.18f + 0.08f * static_cast<float>(i % 3)) * (0.45f + fracture * 0.85f);
+            const Vec3 dir = normalize(u * std::cos(a) + v * std::sin(a));
+            const Vec3 jitter = u * (std::sin(a * 1.7f) * 0.10f * fracture) + v * (std::cos(a * 1.3f) * 0.08f * fracture);
+            const Vec3 start = center + jitter * 0.35f;
+            addLine(start, start + dir * len);
+            if (fracture > 0.56f) addLine(start + dir * (len * 0.48f), start + dir * (len * 0.68f) + normalize(v * std::cos(a) - u * std::sin(a)) * (len * 0.34f));
+        }
+    }
 
     glUseProgram(lineUniforms.program);
     glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
     const float pulse = 0.65f + 0.35f * std::sin(time * 4.0f);
+    const float progressPulse = std::clamp(progress, 0.0f, 1.0f);
     if (building) glUniform4f(lineUniforms.color, 0.55f, 0.72f + pulse * 0.16f, 0.82f, 0.72f + pulse * 0.23f);
-    else glUniform4f(lineUniforms.color, 0.95f, 0.78f + pulse * 0.18f, 0.52f, 0.72f + pulse * 0.23f);
+    else glUniform4f(lineUniforms.color, 1.0f, 0.66f + pulse * 0.22f, 0.30f, 0.70f + progressPulse * 0.28f);
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
-    glLineWidth(2.0f);
+    glLineWidth(building ? 2.0f : 2.0f + progressPulse * 2.2f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    if (!building && progressPulse > 0.35f) {
+        glUniform4f(lineUniforms.color, 1.0f, 0.28f, 0.05f, 0.16f + progressPulse * 0.24f);
+        glLineWidth(7.0f + progressPulse * 5.0f);
+        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    }
     glLineWidth(1.0f);
 }
 
@@ -3817,6 +3877,7 @@ int main() {
     Vec3 miningTarget{-9999.0f, -9999.0f, -9999.0f};
     Vec3 buildingTarget{-9999.0f, -9999.0f, -9999.0f};
     float miningTimer = 0.0f;
+    float miningImpactTimer = 0.0f;
     float buildingTimer = 0.0f;
     float buildCooldown = 0.0f;
     float toolHitCooldown = 0.0f;
@@ -4097,6 +4158,7 @@ int main() {
         playerTwo.hurtTimer = std::max(0.0f, playerTwo.hurtTimer - simDt);
         toolHitCooldown = std::max(0.0f, toolHitCooldown - simDt);
         toolHitCooldownTwo = std::max(0.0f, toolHitCooldownTwo - simDt);
+        miningImpactTimer = std::max(0.0f, miningImpactTimer - simDt * 5.2f);
         const int scoreBeforeCombatOne = player.score;
         const int scoreBeforeCombatTwo = playerTwo.score;
         const bool playerAtomic = playerToolMode == ToolMode::AtomicMissile;
@@ -4197,6 +4259,7 @@ int main() {
                 world.set(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z), Block::Air);
                 rebuildMeshes(world, opaque, transparentMesh);
                 satelliteFeedDirty = true;
+                miningImpactTimer = 1.0f;
                 miningTimer = 0.0f;
                 miningTarget = {-9999.0f, -9999.0f, -9999.0f};
             }
@@ -4413,6 +4476,11 @@ int main() {
                 else drawSmallReticle(uiProgram, uiVao, uiVbo);
                 drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
                 const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
+                const bool miningFeedback = hasHit && !playerMissileMode && !playerShotgunMode && leftDown && sameBlockCell(miningTarget, hit);
+                const float miningFeedbackProgress = miningFeedback
+                    ? miningTimer / std::max(0.001f, mineDuration(world.get(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z))))
+                    : 0.0f;
+                drawMiningFeedback(uiProgram, uiVao, uiVbo, miningFeedback, miningFeedbackProgress, miningImpactTimer, renderTime);
                 drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, shotgunProgress, renderTime);
             }
             glDisable(GL_BLEND);
@@ -4472,6 +4540,7 @@ int main() {
         else drawSmallReticle(uiProgram, uiVao, uiVbo);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
         const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
+        drawMiningFeedback(uiProgram, uiVao, uiVbo, showingMine, interactionProgress, miningImpactTimer, renderTime);
         drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
