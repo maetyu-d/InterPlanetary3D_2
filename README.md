@@ -2,6 +2,8 @@
 
 InterPlanetary 3D is a voxel-based, local 2 player duel inspired by Minecraft and Worms, but also WWI trench warfare, drone warfare in Ukraine, British government leafleting on domestic atomic bomb shelters, and the opening sequence of David Lynch's Eraserhead, all rendered with GLFW and modern OpenGL. Four different planet types are available - bleak, desert, green, and brutalist, but each planet is always a 3-D cube with rare electric-blue fuel seams, toxic-yellow plutonium pockets, and an orbiting satellite with a live downward-facing camera feed. Players start on opposite faces of the planet, and there's an optional forcefield to restrict digging tactices if desired. There are also four different game modes - freeplay first to three kills, turn-based simultaneous (most kills after 10 rounds, sudden death if drawn), turn-based alternate, and turn-based alternate single screen. Allowable weapon types can also be customised. 
 
+You can get an idea of what it looks like [HERE](https://youtu.be/glHxM3eqlF8).
+
 The latest builds on the main branch are for Windows, with some early builds being for Mac, on which the project was started. For the latest Mac builds see the dedicated Mac branch of this repository.
 
 ## Screenshots
