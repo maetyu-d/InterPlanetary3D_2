@@ -214,6 +214,13 @@ enum class WeaponMode {
     ShotgunsOnly
 };
 
+enum class GraphicsFidelity {
+    Low,
+    Medium,
+    High,
+    VeryHigh
+};
+
 enum class GameType {
     FirstToThree,
     PhasedTurns,
@@ -294,6 +301,7 @@ struct VoxelUniforms {
     GLint fogColor = -1;
     GLint time = -1;
     GLint feedClarity = -1;
+    GLint fidelity = -1;
 };
 
 struct LineUniforms {
@@ -396,6 +404,16 @@ struct Blast {
     Vec3 position{};
 };
 
+struct ShotgunBlast {
+    bool active = false;
+    float age = 0.0f;
+    float seed = 0.0f;
+    int owner = 1;
+    Vec3 origin{};
+    Vec3 direction{0.0f, 0.0f, 1.0f};
+    Vec3 up{0.0f, 1.0f, 0.0f};
+};
+
 struct Cell {
     int x = 0;
     int y = 0;
@@ -407,6 +425,7 @@ bool mouseCaptured = false;
 bool firstMouse = true;
 Vec2 lastMouse{};
 Vec2 pendingMouseLook{};
+GraphicsFidelity currentGraphicsFidelity = GraphicsFidelity::High;
 
 int randomPlanetSeed() {
     const auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
@@ -652,6 +671,36 @@ const char* weaponModeName(WeaponMode mode) {
         case WeaponMode::ShotgunsOnly: return "SHOTGUNS";
     }
     return "ALL";
+}
+
+GraphicsFidelity nextGraphicsFidelity(GraphicsFidelity fidelity) {
+    switch (fidelity) {
+        case GraphicsFidelity::High: return GraphicsFidelity::VeryHigh;
+        case GraphicsFidelity::VeryHigh: return GraphicsFidelity::Medium;
+        case GraphicsFidelity::Medium: return GraphicsFidelity::Low;
+        case GraphicsFidelity::Low: return GraphicsFidelity::High;
+    }
+    return GraphicsFidelity::High;
+}
+
+int graphicsFidelityValue(GraphicsFidelity fidelity) {
+    switch (fidelity) {
+        case GraphicsFidelity::Low: return 0;
+        case GraphicsFidelity::Medium: return 1;
+        case GraphicsFidelity::High: return 2;
+        case GraphicsFidelity::VeryHigh: return 3;
+    }
+    return 2;
+}
+
+const char* graphicsFidelityName(GraphicsFidelity fidelity) {
+    switch (fidelity) {
+        case GraphicsFidelity::Low: return "LOW";
+        case GraphicsFidelity::Medium: return "MED";
+        case GraphicsFidelity::High: return "HIGH";
+        case GraphicsFidelity::VeryHigh: return "VERY HIGH";
+    }
+    return "HIGH";
 }
 
 GameType nextGameType(GameType type) {
@@ -1190,7 +1239,8 @@ VoxelUniforms voxelUniforms(GLuint program) {
         glGetUniformLocation(program, "uSunDir"),
         glGetUniformLocation(program, "uFogColor"),
         glGetUniformLocation(program, "uTime"),
-        glGetUniformLocation(program, "uFeedClarity")
+        glGetUniformLocation(program, "uFeedClarity"),
+        glGetUniformLocation(program, "uFidelity")
     };
 }
 
@@ -1805,6 +1855,24 @@ bool applyToolDamage(const World& world, Player& target, bool targetOppositeFace
 bool rayHitsPlayer(Vec3 origin, Vec3 direction, const Player& target, float maxDistance);
 bool raycastBlock(const World& world, Vec3 origin, Vec3 direction, float maxDistance, Vec3& hit, Vec3& previous);
 
+void triggerShotgunBlast(ShotgunBlast& blast, Vec3 origin, Vec3 direction, Vec3 upHint, float time, int owner) {
+    Vec3 right = normalize(cross(direction, upHint));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    blast.active = true;
+    blast.age = 0.0f;
+    blast.seed = time * 31.0f + static_cast<float>(owner) * 17.0f;
+    blast.owner = owner;
+    blast.origin = origin + direction * 0.55f - upHint * 0.08f;
+    blast.direction = normalize(direction);
+    blast.up = normalize(cross(right, blast.direction));
+}
+
+void updateShotgunBlast(ShotgunBlast& blast, float dt) {
+    if (!blast.active) return;
+    blast.age += dt;
+    if (blast.age > 0.42f) blast.active = false;
+}
+
 bool fireShotgun(World& world, Player& target, bool targetOppositeFace, Player& attacker, Vec3 origin, Vec3 direction, Vec3 upHint, float time, int owner) {
     Vec3 right = normalize(cross(direction, upHint));
     if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
@@ -2123,31 +2191,48 @@ void addUiTextCentered(std::vector<UiVertex>& vertices, float centerX, float y, 
     addUiText(vertices, centerX - uiTextWidth(size, text) * 0.5f, y, size, text, color);
 }
 
-void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool shotgun, bool rocketLauncher, float progress, float time, bool alternatePalette = false) {
-    const float action = (mining || building || shotgun || rocketLauncher) ? std::sin(std::clamp(progress, 0.0f, 1.0f) * Pi) : 0.0f;
+void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool building, bool shotgun, bool rocketLauncher, bool atomicLauncher, float progress, float time, bool alternatePalette = false) {
+    const float clampedProgress = std::clamp(progress, 0.0f, 1.0f);
+    float action = (mining || building || shotgun || rocketLauncher) ? std::sin(clampedProgress * Pi) : 0.0f;
+    if (mining) {
+        const float impact = std::pow(std::max(0.0f, std::sin(time * 22.0f)), 5.0f);
+        action = std::clamp(0.12f + clampedProgress * 0.28f + impact * 0.82f, 0.0f, 1.0f);
+    }
     const float idle = std::sin(time * 1.7f) * 0.006f;
-    const float sx = -0.015f - action * 0.030f;
-    const float sy = idle + action * 0.030f;
-    const float swing = -0.50f - action * 0.28f;
+    const float sx = -0.015f - action * (mining ? 0.046f : 0.030f);
+    const float sy = idle + action * (mining ? 0.044f : 0.030f);
+    const float swing = -0.50f - action * (mining ? 0.44f : 0.28f);
     std::vector<UiVertex> vertices;
     vertices.reserve(108);
 
     const Vec2 pivot{0.73f + sx, 0.73f + sy};
     if (rocketLauncher) {
         const Vec2 tail{0.825f + sx, 0.800f + sy};
-        const Vec2 muzzle{0.555f, 0.545f};
+        const Vec2 muzzle{atomicLauncher ? 0.525f : 0.555f, atomicLauncher ? 0.520f : 0.545f};
         const Vec2 aim{muzzle.x - tail.x, muzzle.y - tail.y};
         const float launcherAngle = std::atan2(aim.y, aim.x);
         const float launcherLength = std::sqrt(aim.x * aim.x + aim.y * aim.y);
-        const std::array<float, 4> launcherBody = alternatePalette ? std::array<float, 4>{0.050f, 0.075f, 0.105f, 1.0f} : std::array<float, 4>{0.055f, 0.064f, 0.060f, 1.0f};
-        const std::array<float, 4> launcherBand = alternatePalette ? std::array<float, 4>{0.72f, 0.86f, 0.08f, 1.0f} : std::array<float, 4>{0.42f, 0.12f, 0.055f, 1.0f};
-        const std::array<float, 4> launcherTip = alternatePalette ? std::array<float, 4>{0.12f, 0.64f, 1.0f, 1.0f} : std::array<float, 4>{0.70f, 0.18f, 0.06f, 1.0f};
-        addUiRectRotated(vertices, tail, launcherAngle, 0.000f, -0.034f, launcherLength, 0.068f, launcherBody);
-        addUiRectRotated(vertices, tail, launcherAngle, -0.020f, -0.052f, 0.075f, 0.104f, {0.18f, 0.20f, 0.18f, 1.0f});
-        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.046f, -0.060f, 0.052f, 0.120f, launcherBand);
-        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.035f, -0.082f, 0.034f, 0.044f, launcherTip);
-        addUiRectRotated(vertices, tail, launcherAngle, 0.080f, 0.020f, 0.052f, 0.086f, {0.11f, 0.115f, 0.105f, 1.0f});
-        addUiRectRotated(vertices, tail, launcherAngle, 0.108f, 0.088f, 0.035f, 0.058f, {0.035f, 0.032f, 0.030f, 1.0f});
+        const std::array<float, 4> launcherBody = atomicLauncher
+            ? (alternatePalette ? std::array<float, 4>{0.020f, 0.055f, 0.090f, 1.0f} : std::array<float, 4>{0.070f, 0.065f, 0.035f, 1.0f})
+            : (alternatePalette ? std::array<float, 4>{0.050f, 0.075f, 0.105f, 1.0f} : std::array<float, 4>{0.055f, 0.064f, 0.060f, 1.0f});
+        const std::array<float, 4> launcherBand = atomicLauncher
+            ? std::array<float, 4>{0.82f, 1.0f, 0.03f, 1.0f}
+            : (alternatePalette ? std::array<float, 4>{0.72f, 0.86f, 0.08f, 1.0f} : std::array<float, 4>{0.42f, 0.12f, 0.055f, 1.0f});
+        const std::array<float, 4> launcherTip = atomicLauncher
+            ? std::array<float, 4>{0.16f, 1.0f, 0.20f, 1.0f}
+            : (alternatePalette ? std::array<float, 4>{0.12f, 0.64f, 1.0f, 1.0f} : std::array<float, 4>{0.70f, 0.18f, 0.06f, 1.0f});
+        const float tubeHeight = atomicLauncher ? 0.092f : 0.068f;
+        addUiRectRotated(vertices, tail, launcherAngle, 0.000f, -tubeHeight * 0.5f, launcherLength, tubeHeight, launcherBody);
+        addUiRectRotated(vertices, tail, launcherAngle, -0.028f, atomicLauncher ? -0.067f : -0.052f, atomicLauncher ? 0.095f : 0.075f, atomicLauncher ? 0.134f : 0.104f, {0.18f, 0.20f, 0.18f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.066f, atomicLauncher ? -0.080f : -0.060f, atomicLauncher ? 0.070f : 0.052f, atomicLauncher ? 0.160f : 0.120f, launcherBand);
+        if (atomicLauncher) {
+            addUiRectRotated(vertices, tail, launcherAngle, launcherLength * 0.34f, -0.060f, 0.035f, 0.120f, launcherBand);
+            addUiRectRotated(vertices, tail, launcherAngle, launcherLength * 0.52f, -0.060f, 0.035f, 0.120f, {0.05f, 0.06f, 0.035f, 1.0f});
+            addUiRectRotated(vertices, tail, launcherAngle, 0.090f, -0.077f, 0.060f, 0.024f, {0.16f, 1.0f, 0.20f, 0.88f});
+        }
+        addUiRectRotated(vertices, tail, launcherAngle, launcherLength - 0.035f, atomicLauncher ? -0.102f : -0.082f, atomicLauncher ? 0.044f : 0.034f, atomicLauncher ? 0.060f : 0.044f, launcherTip);
+        addUiRectRotated(vertices, tail, launcherAngle, 0.080f, 0.020f, atomicLauncher ? 0.064f : 0.052f, atomicLauncher ? 0.102f : 0.086f, {0.11f, 0.115f, 0.105f, 1.0f});
+        addUiRectRotated(vertices, tail, launcherAngle, 0.108f, atomicLauncher ? 0.105f : 0.088f, atomicLauncher ? 0.044f : 0.035f, atomicLauncher ? 0.070f : 0.058f, {0.035f, 0.032f, 0.030f, 1.0f});
     } else if (shotgun) {
         const Vec2 grip{0.785f + sx, 0.770f + sy};
         const Vec2 muzzle{0.500f, 0.500f};
@@ -2177,6 +2262,11 @@ void drawHand(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, bool mining, bool bu
             : (building ? std::array<float, 4>{0.18f, 0.19f, 0.19f, 1.0f} : std::array<float, 4>{0.02f, 0.28f, 0.29f, 1.0f});
         addUiRectRotated(vertices, pivot, swing, -0.105f, -0.060f, 0.180f, 0.050f, toolShadow);
         addUiRectRotated(vertices, pivot, swing, -0.085f, -0.080f, 0.115f, 0.060f, toolColor);
+        if (mining && action > 0.46f) {
+            addUiRectRotated(vertices, pivot, swing, 0.034f, -0.110f, 0.026f + action * 0.018f, 0.012f, {0.96f, 0.76f, 0.34f, 0.72f});
+            addUiRectRotated(vertices, pivot, swing + 0.36f, 0.050f, -0.135f, 0.018f + action * 0.012f, 0.010f, {0.84f, 0.88f, 0.78f, 0.58f});
+            addUiRectRotated(vertices, pivot, swing - 0.28f, 0.010f, -0.128f, 0.016f + action * 0.016f, 0.010f, {0.55f, 0.42f, 0.30f, 0.70f});
+        }
     }
 
     addUiRect(vertices, 0.75f + sx, 0.76f + sy, 0.24f, 0.14f, {0.055f, 0.048f, 0.044f, 0.94f});
@@ -2570,7 +2660,7 @@ void drawSelection(const LineUniforms& lineUniforms, GLuint lineVao, GLuint line
     const std::array<Vec3, 8> p{{{x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0}, {x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}}};
     const std::array<int, 24> e{{0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7}};
     std::vector<float> data;
-    data.reserve(3 * 96);
+    data.reserve(3 * 160);
     auto addLine = [&data](Vec3 a, Vec3 b) {
         data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
         data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
@@ -2617,16 +2707,43 @@ void drawSelection(const LineUniforms& lineUniforms, GLuint lineVao, GLuint line
         if (piece > 0.0f) addLine(ring[i], ring[i] + (ring[(i + 1) % 4] - ring[i]) * piece);
         remaining -= 1.0f;
     }
+    if (!building && progress > 0.02f) {
+        const Vec3 u = f1 - f0;
+        const Vec3 v = f3 - f0;
+        auto facePoint = [&](float a, float b) {
+            const float bite = 0.010f + std::pow(std::max(0.0f, std::sin(time * 22.0f)), 5.0f) * 0.022f;
+            return f0 + u * a + v * b + normal * bite;
+        };
+        const Vec3 center = facePoint(0.50f, 0.50f);
+        const float crack = std::clamp(progress, 0.0f, 1.0f);
+        const int crackCount = 3 + static_cast<int>(crack * 9.0f);
+        const std::array<Vec2, 12> endpoints{{
+            {0.27f, 0.42f}, {0.37f, 0.24f}, {0.59f, 0.28f}, {0.72f, 0.42f},
+            {0.67f, 0.62f}, {0.54f, 0.76f}, {0.38f, 0.68f}, {0.23f, 0.58f},
+            {0.46f, 0.18f}, {0.80f, 0.53f}, {0.49f, 0.84f}, {0.16f, 0.48f}
+        }};
+        for (int i = 0; i < crackCount; ++i) {
+            const Vec2 end = endpoints[static_cast<std::size_t>(i)];
+            const Vec3 outer = facePoint(0.50f + (end.x - 0.50f) * (0.24f + crack * 0.84f),
+                                         0.50f + (end.y - 0.50f) * (0.24f + crack * 0.84f));
+            addLine(center, outer);
+            if (crack > 0.42f && (i % 2) == 0) {
+                const Vec3 branch = facePoint(end.x * 0.85f + 0.075f, end.y * 0.70f + 0.15f);
+                addLine(outer, outer + (branch - outer) * (crack - 0.30f));
+            }
+        }
+    }
 
     glUseProgram(lineUniforms.program);
     glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
-    const float pulse = 0.65f + 0.35f * std::sin(time * 4.0f);
+    const float mineImpact = !building ? std::pow(std::max(0.0f, std::sin(time * 22.0f)), 5.0f) : 0.0f;
+    const float pulse = 0.65f + 0.35f * std::sin(time * (building ? 4.0f : 10.0f));
     if (building) glUniform4f(lineUniforms.color, 0.55f, 0.72f + pulse * 0.16f, 0.82f, 0.72f + pulse * 0.23f);
-    else glUniform4f(lineUniforms.color, 0.95f, 0.78f + pulse * 0.18f, 0.52f, 0.72f + pulse * 0.23f);
+    else glUniform4f(lineUniforms.color, 0.95f + mineImpact * 0.05f, 0.62f + pulse * 0.25f, 0.32f + mineImpact * 0.24f, 0.76f + pulse * 0.16f + mineImpact * 0.12f);
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
-    glLineWidth(2.0f);
+    glLineWidth(building ? 2.0f : 2.8f + mineImpact * 1.2f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -2642,6 +2759,7 @@ void drawVoxelScene(const VoxelUniforms& uniforms, const Mat4& vp, const Mesh& o
     glUniform3f(uniforms.fogColor, 0.12f, 0.105f, 0.095f);
     glUniform1f(uniforms.time, time);
     glUniform1f(uniforms.feedClarity, feedClarity);
+    glUniform1i(uniforms.fidelity, graphicsFidelityValue(currentGraphicsFidelity));
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -2724,11 +2842,11 @@ void drawOrbitTrail(const World& world, const LineUniforms& lineUniforms, GLuint
 
 void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, const Blast& blast) {
     if (!blast.active) return;
-    const float lifetime = blast.atomic ? 1.9f : 1.35f;
+    const float lifetime = blast.atomic ? 2.6f : 1.35f;
     const float t = std::clamp(blast.age / lifetime, 0.0f, 1.0f);
-    const float radius = (blast.atomic ? 2.0f : 1.2f) + t * (blast.atomic ? 16.0f : 9.0f);
+    const float radius = (blast.atomic ? 3.2f : 1.2f) + t * (blast.atomic ? 28.0f : 9.0f);
     std::vector<float> data;
-    data.reserve(3 * 220);
+    data.reserve(3 * 420);
     auto addLine = [&data](Vec3 a, Vec3 b) {
         data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
         data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
@@ -2747,6 +2865,31 @@ void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo,
         const Vec3 dir = normalize({std::cos(a), std::sin(a * 1.7f) * 0.45f, std::sin(a)});
         addLine(blast.position, blast.position + dir * (radius * 1.28f));
     }
+    if (blast.atomic) {
+        const float columnHeight = 5.0f + t * 24.0f;
+        const float columnRadius = 1.7f + t * 4.8f;
+        const float capRadius = 5.5f + t * 17.0f;
+        const float capY = columnHeight;
+        constexpr int CloudSegments = 28;
+        for (int i = 0; i < CloudSegments; ++i) {
+            const float a0 = static_cast<float>(i) / static_cast<float>(CloudSegments) * Pi * 2.0f;
+            const float a1 = static_cast<float>(i + 1) / static_cast<float>(CloudSegments) * Pi * 2.0f;
+            const float wobble0 = 1.0f + std::sin(a0 * 5.0f + blast.age * 8.0f) * 0.12f;
+            const float wobble1 = 1.0f + std::sin(a1 * 5.0f + blast.age * 8.0f) * 0.12f;
+            addLine(blast.position + Vec3{std::cos(a0) * columnRadius, 0.0f, std::sin(a0) * columnRadius},
+                    blast.position + Vec3{std::cos(a0) * (columnRadius * 0.58f), columnHeight * 0.88f, std::sin(a0) * (columnRadius * 0.58f)});
+            addLine(blast.position + Vec3{std::cos(a0) * capRadius * wobble0, capY, std::sin(a0) * capRadius * wobble0},
+                    blast.position + Vec3{std::cos(a1) * capRadius * wobble1, capY + std::sin(a1 * 3.0f) * 1.1f, std::sin(a1) * capRadius * wobble1});
+            addLine(blast.position + Vec3{std::cos(a0) * (capRadius * 0.58f), capY + capRadius * 0.24f, std::sin(a0) * (capRadius * 0.58f)},
+                    blast.position + Vec3{std::cos(a1) * (capRadius * 0.58f), capY + capRadius * 0.24f + std::cos(a1 * 2.0f) * 0.9f, std::sin(a1) * (capRadius * 0.58f)});
+        }
+        for (int i = 0; i < 10; ++i) {
+            const float a = static_cast<float>(i) / 10.0f * Pi * 2.0f;
+            const Vec3 dir = normalize({std::cos(a) * 0.45f, 1.0f, std::sin(a) * 0.45f});
+            addLine(blast.position + Vec3{std::cos(a) * columnRadius, 0.0f, std::sin(a) * columnRadius},
+                    blast.position + dir * (columnHeight + capRadius * 0.42f));
+        }
+    }
 
     glUseProgram(lineUniforms.program);
     glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
@@ -2755,7 +2898,7 @@ void drawBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo,
     glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
-    glLineWidth(3.0f);
+    glLineWidth(blast.atomic ? 4.2f : 3.0f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -2825,6 +2968,55 @@ void drawRocketFlame(const LineUniforms& lineUniforms, GLuint lineVao, GLuint li
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
     glBindVertexArray(lineVao);
     glLineWidth(rocket.atomic ? 3.0f : 2.4f);
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
+    glLineWidth(1.0f);
+}
+
+void drawShotgunBlast(const LineUniforms& lineUniforms, GLuint lineVao, GLuint lineVbo, const Mat4& vp, const ShotgunBlast& blast, float time) {
+    if (!blast.active) return;
+    const float life = std::clamp(blast.age / 0.42f, 0.0f, 1.0f);
+    const float fade = 1.0f - life;
+    Vec3 right = normalize(cross(blast.direction, blast.up));
+    if (length(right) < 0.001f) right = {1.0f, 0.0f, 0.0f};
+    const Vec3 up = normalize(cross(right, blast.direction));
+    std::vector<float> data;
+    data.reserve(3 * 176);
+    auto addLine = [&data](Vec3 a, Vec3 b) {
+        data.push_back(a.x); data.push_back(a.y); data.push_back(a.z);
+        data.push_back(b.x); data.push_back(b.y); data.push_back(b.z);
+    };
+
+    const Vec3 muzzle = blast.origin + blast.direction * (0.14f + life * 0.35f);
+    for (int i = 0; i < 18; ++i) {
+        const float lane = static_cast<float>(i);
+        const float a = std::sin(blast.seed + lane * 12.9898f);
+        const float b = std::cos(blast.seed * 0.73f + lane * 78.233f);
+        const float spread = 0.060f + 0.012f * std::sin(lane * 1.91f);
+        const Vec3 dir = normalize(blast.direction + right * (a * spread) + up * (b * spread));
+        const float length = 1.4f + lane * 0.11f + fade * 2.8f;
+        const Vec3 start = muzzle + dir * (life * 1.8f);
+        const Vec3 end = start + dir * length;
+        addLine(start, end);
+        if (i < 10) {
+            const Vec3 sparkStart = muzzle + dir * (0.45f + life * 2.0f);
+            const Vec3 sparkDir = normalize(dir + right * (b * 0.16f) - up * (a * 0.12f));
+            addLine(sparkStart, sparkStart + sparkDir * (0.22f + fade * 0.70f));
+        }
+    }
+    for (int i = 0; i < 8; ++i) {
+        const float angle = (static_cast<float>(i) / 8.0f) * Pi * 2.0f + time * 10.0f;
+        const Vec3 flareDir = normalize(blast.direction * 0.95f + right * (std::cos(angle) * 0.22f) + up * (std::sin(angle) * 0.22f));
+        addLine(blast.origin, blast.origin + flareDir * (0.52f + fade * 0.42f));
+    }
+
+    glUseProgram(lineUniforms.program);
+    glUniformMatrix4fv(lineUniforms.mvp, 1, GL_FALSE, vp.m);
+    if (blast.owner == 2) glUniform4f(lineUniforms.color, 0.24f, 0.64f, 1.0f, fade * 0.92f);
+    else glUniform4f(lineUniforms.color, 1.0f, 0.58f, 0.10f, fade * 0.96f);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data());
+    glBindVertexArray(lineVao);
+    glLineWidth(2.2f + fade * 1.6f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.size() / 3));
     glLineWidth(1.0f);
 }
@@ -2992,6 +3184,7 @@ uniform vec3 uSunDir;
 uniform vec3 uFogColor;
 uniform float uTime;
 uniform float uFeedClarity;
+uniform int uFidelity;
 out vec4 FragColor;
 
 float hash(vec3 p) {
@@ -3040,6 +3233,30 @@ void main() {
     vec3 p = vWorldPos;
     vec3 base = vColor.rgb;
     float alpha = vColor.a;
+
+    if (uFidelity == 0) {
+        float sun = max(dot(n, normalize(-uSunDir)), 0.0);
+        float sky = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
+        float resource = kind == 10.0 || kind == 11.0 ? 1.0 : 0.0;
+        float grey = dot(base, vec3(0.299, 0.587, 0.114));
+        base = mix(vec3(grey), base, resource);
+        vec3 toPoint = vWorldPos - uCamera;
+        float lampDistance = length(toPoint);
+        vec3 lampRay = normalize(toPoint);
+        float cone = step(0.86, dot(lampRay, normalize(uHeadlampDir)));
+        float facing = max(dot(n, -lampRay), 0.0);
+        float falloff = 1.0 / (1.0 + lampDistance * lampDistance * 0.040);
+        vec3 light = vec3(0.18) + vec3(0.58) * sun + vec3(0.14) * sky;
+        light += vec3(0.85, 0.88, 0.76) * cone * facing * falloff * 5.0;
+        vec3 color = base * light;
+        if (kind == 10.0) color = mix(color, vec3(0.00, 0.92, 1.0), 0.55);
+        if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.52);
+        float fog = smoothstep(32.0, 88.0, length(uCamera - vWorldPos));
+        color = mix(color, uFogColor, fog * 0.42);
+        color = floor(clamp(color, 0.0, 1.0) * 9.0) / 9.0;
+        FragColor = vec4(color, alpha);
+        return;
+    }
 
     if (kind == 1.0) {
         float fine = fbm(p * 6.5);
@@ -3169,9 +3386,10 @@ void main() {
     if (kind == 10.0) color += base * 1.15 + vec3(0.0, 0.35, 0.55) * edge;
     if (kind == 11.0) color += base * 0.95 + vec3(0.45, 0.55, 0.0) * edge;
     float distanceToEye = length(uCamera - vWorldPos);
-    float distanceFog = smoothstep(18.0, 70.0, distanceToEye) * mix(1.0, 0.28, uFeedClarity);
-    float lowFog = (1.0 - smoothstep(4.0, 24.0, vWorldPos.y)) * smoothstep(5.0, 45.0, distanceToEye) * mix(1.0, 0.18, uFeedClarity);
-    float ashBands = smoothstep(0.38, 0.72, noise(vec3(vWorldPos.xz * 0.085, 3.0))) * distanceFog;
+    float fidelityScale = uFidelity == 1 ? 0.46 : 1.0;
+    float distanceFog = smoothstep(18.0, 70.0, distanceToEye) * mix(1.0, 0.28, uFeedClarity) * mix(0.70, 1.0, fidelityScale);
+    float lowFog = (1.0 - smoothstep(4.0, 24.0, vWorldPos.y)) * smoothstep(5.0, 45.0, distanceToEye) * mix(1.0, 0.18, uFeedClarity) * fidelityScale;
+    float ashBands = smoothstep(0.38, 0.72, noise(vec3(vWorldPos.xz * 0.085, 3.0))) * distanceFog * fidelityScale;
     vec3 hotHorizon = vec3(0.46, 0.085, 0.030);
     vec3 ashFog = mix(uFogColor, vec3(0.13, 0.12, 0.11), lowFog * 0.90 + ashBands * 0.45);
     vec3 fogColor = mix(ashFog, hotHorizon, smoothstep(24.0, 80.0, distanceToEye) * (1.0 - smoothstep(0.0, 18.0, vWorldPos.y)) * 0.32);
@@ -3180,6 +3398,18 @@ void main() {
     if (kind == 10.0) color = mix(color, vec3(0.00, 0.92, 1.0), 0.34);
     if (kind == 11.0) color = mix(color, vec3(1.0, 1.0, 0.02), 0.30);
     color = mix(color, pow(color * 1.55, vec3(0.88)), uFeedClarity);
+    if (uFidelity == 3) {
+        float micro = fbm(vWorldPos * 12.0);
+        float deepCrack = cracks(vWorldPos * 1.65);
+        vec3 emberBounce = vec3(0.20, 0.045, 0.018) * smoothstep(0.18, 0.82, lowFog + ashBands);
+        color *= mix(0.82, 1.24, micro);
+        color = mix(color, color * vec3(0.42, 0.44, 0.46), deepCrack * 0.32);
+        color += rim * vec3(0.12, 0.18, 0.16);
+        color += emberBounce;
+        if (kind == 10.0) color += vec3(0.00, 1.00, 1.00) * (0.42 + edge * 0.65);
+        if (kind == 11.0) color += vec3(1.00, 1.00, 0.00) * (0.34 + edge * 0.58);
+        color = pow(max(color, vec3(0.0)), vec3(0.82, 0.84, 0.88));
+    }
     FragColor = vec4(color, alpha);
 }
 )GLSL";
@@ -3269,6 +3499,7 @@ const char* skyFragmentShader = R"GLSL(
 in vec2 vUV;
 uniform float uTime;
 uniform int uTheme;
+uniform int uFidelity;
 out vec4 FragColor;
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -3289,8 +3520,39 @@ float fbm(vec2 p) {
     }
     return v;
 }
+vec3 veryHighSky(vec3 color, vec2 uv) {
+    if (uFidelity != 3) return color;
+    float smokeFine = fbm(uv * vec2(22.0, 10.0) + vec2(uTime * -0.040, uTime * 0.025));
+    float torn = smoothstep(0.48, 0.92, smokeFine) * (1.0 - smoothstep(0.18, 0.70, uv.y));
+    float scan = smoothstep(0.015, 0.0, abs(fract(uv.y * 110.0) - 0.5)) * 0.030;
+    color += vec3(0.32, 0.055, 0.015) * torn;
+    color = mix(color, pow(max(color, vec3(0.0)) * 1.20, vec3(0.82)), 0.34);
+    color *= 1.0 - scan;
+    color *= mix(0.72, 1.14, 1.0 - smoothstep(0.18, 0.95, distance(uv, vec2(0.5, 0.48))));
+    return color;
+}
 void main() {
     vec2 uv = vUV;
+    if (uFidelity == 0) {
+        vec3 horizon = vec3(0.42, 0.10, 0.04);
+        vec3 zenith = vec3(0.018, 0.018, 0.022);
+        if (uTheme == 1) {
+            horizon = vec3(0.70, 0.42, 0.16);
+            zenith = vec3(0.16, 0.11, 0.08);
+        } else if (uTheme == 2) {
+            horizon = vec3(0.40, 0.62, 0.34);
+            zenith = vec3(0.12, 0.24, 0.36);
+        } else if (uTheme == 3) {
+            horizon = vec3(0.30, 0.29, 0.26);
+            zenith = vec3(0.060, 0.062, 0.066);
+        }
+        vec3 color = mix(horizon, zenith, smoothstep(0.0, 1.0, floor(uv.y * 16.0) / 16.0));
+        float ridge = step(uv.y, 0.085 + floor(sin(floor(uv.x * 36.0)) * 3.0) * 0.006);
+        color = mix(color, vec3(0.005, 0.005, 0.005), ridge);
+        FragColor = vec4(veryHighSky(color, uv), 1.0);
+        return;
+    }
+    if (uFidelity == 1) uv = floor(uv * 180.0) / 180.0;
     if (uTheme == 3) {
         float slow = uTime * 0.006;
         float smog = fbm(uv * vec2(7.0, 3.5) + vec2(slow, -slow * 0.4));
@@ -3302,7 +3564,7 @@ void main() {
         vec2 sunPos = vec2(0.72, 0.16);
         float sunDist = distance(uv, sunPos);
         color += vec3(0.48, 0.38, 0.22) * pow(max(0.0, 0.28 - sunDist), 2.0) * 2.2;
-        FragColor = vec4(color, 1.0);
+        FragColor = vec4(veryHighSky(color, uv), 1.0);
         return;
     }
     if (uTheme == 2) {
@@ -3318,7 +3580,7 @@ void main() {
         float sunDist = distance(uv, sunPos);
         float glow = pow(max(0.0, 0.34 - sunDist), 2.0);
         color += vec3(0.88, 0.72, 0.36) * glow * 2.5;
-        FragColor = vec4(color, 1.0);
+        FragColor = vec4(veryHighSky(color, uv), 1.0);
         return;
     }
     if (uTheme == 1) {
@@ -3338,7 +3600,7 @@ void main() {
         color += vec3(1.0, 0.67, 0.24) * glare * 3.0;
         color = mix(color, vec3(1.0, 0.78, 0.34), disk * 0.72);
         color += vec3(0.24, 0.13, 0.06) * smoothstep(0.48, 0.90, highDust) * horizonBand;
-        FragColor = vec4(color, 1.0);
+        FragColor = vec4(veryHighSky(color, uv), 1.0);
         return;
     }
     float slow = uTime * 0.018;
@@ -3374,7 +3636,7 @@ void main() {
     float vignette = 1.0 - smoothstep(0.18, 0.92, distance(uv, vec2(0.5, 0.48)));
     color *= mix(0.58, 1.08, vignette);
     color = pow(color, vec3(0.94, 1.02, 1.08));
-    FragColor = vec4(color, 1.0);
+    FragColor = vec4(veryHighSky(color, uv), 1.0);
 }
 )GLSL";
 
@@ -3527,6 +3789,7 @@ int main() {
     const ForcefieldUniforms forcefieldUniform = forcefieldUniforms(forcefieldProgram);
     const GLint skyTimeUniform = glGetUniformLocation(skyProgram, "uTime");
     const GLint skyThemeUniform = glGetUniformLocation(skyProgram, "uTheme");
+    const GLint skyFidelityUniform = glGetUniformLocation(skyProgram, "uFidelity");
     GLuint emptyVao = 0;
     glGenVertexArrays(1, &emptyVao);
     GLuint lineVbo = 0;
@@ -3571,6 +3834,8 @@ int main() {
     Rocket rocketTwo;
     Blast blast;
     Blast blastTwo;
+    ShotgunBlast shotgunBlast;
+    ShotgunBlast shotgunBlastTwo;
     MatchState match;
     match.startedAt = gameTime;
     match.firstHunter = (world.seed & 1) ? 1 : 2;
@@ -3609,6 +3874,8 @@ int main() {
         rocketTwo.active = false;
         blast.active = false;
         blastTwo.active = false;
+        shotgunBlast.active = false;
+        shotgunBlastTwo.active = false;
         satelliteFeedDirty = true;
     };
     auto startGame = [&]() {
@@ -3673,6 +3940,7 @@ int main() {
             glUseProgram(skyProgram);
             glUniform1f(skyTimeUniform, static_cast<float>(now));
             glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
+            glUniform1i(skyFidelityUniform, graphicsFidelityValue(currentGraphicsFidelity));
             glBindVertexArray(emptyVao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glDisable(GL_CULL_FACE);
@@ -3744,6 +4012,7 @@ int main() {
             firstMouse = true;
             glfwSetInputMode(window, GLFW_CURSOR, mouseCaptured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
         }
+        if (!gamePaused && keyPressed(GLFW_KEY_V)) currentGraphicsFidelity = nextGraphicsFidelity(currentGraphicsFidelity);
         if (!gamePaused && keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
         if (!gamePaused && keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
         if (!gamePaused && keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode, weaponMode);
@@ -3813,7 +4082,7 @@ int main() {
 
         Vec3 hit{};
         Vec3 previous{};
-        bool hasHit = raycastBlock(world, eye, look, 8.0f, hit, previous);
+        bool hasHit = raycastBlock(world, eye, look, 4.0f, hit, previous);
         const bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         const bool rightDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         const bool playerPrimaryFireDown = leftDown;
@@ -3865,6 +4134,7 @@ int main() {
             satelliteFeedDirty = true;
         }
         if (shotgunFirePressed && player.shotgunCooldown <= 0.0f) {
+            triggerShotgunBlast(shotgunBlast, eye, look, {0.0f, player.upSign, 0.0f}, renderTime, 1);
             const bool shotgunBrokeBlocks = fireShotgun(world, playerTwo, true, player, eye, look, {0.0f, player.upSign, 0.0f}, renderTime, 1);
             if (shotgunBrokeBlocks) {
                 rebuildMeshes(world, opaque, transparentMesh);
@@ -3874,6 +4144,7 @@ int main() {
             player.shotgunFlashTimer = 0.18f;
         }
         if (playerTwoShotgunPressed && playerTwo.shotgunCooldown <= 0.0f) {
+            triggerShotgunBlast(shotgunBlastTwo, eyeTwoForFire, lookTwoForFire, {0.0f, playerTwo.upSign, 0.0f}, renderTime, 2);
             const bool shotgunBrokeBlocks = fireShotgun(world, player, false, playerTwo, eyeTwoForFire, lookTwoForFire, {0.0f, playerTwo.upSign, 0.0f}, renderTime, 2);
             if (shotgunBrokeBlocks) {
                 rebuildMeshes(world, opaque, transparentMesh);
@@ -3885,11 +4156,11 @@ int main() {
         const bool rocketWasActive = rocket.active;
         updateRocket(world, rocket, blast, simDt, rocket.active && rocket.age >= 1.0f);
         if (rocketWasActive && !rocket.active && blast.active && blast.age == 0.0f) {
-            const float crater = blast.atomic ? 9.5f : 5.8f;
-            const float damageRadius = blast.atomic ? 13.0f : 7.5f;
+            const float crater = blast.atomic ? 14.5f : 5.8f;
+            const float damageRadius = blast.atomic ? 20.0f : 7.5f;
             collectResourcesInBlast(world, player, blast.position, crater);
             applyBlastDamage(world, playerTwo, true, player, blast.position, damageRadius);
-            applyBlastDamage(world, player, false, playerTwo, blast.position, blast.atomic ? 8.0f : 5.0f);
+            applyBlastDamage(world, player, false, playerTwo, blast.position, blast.atomic ? 12.0f : 5.0f);
             if (destroyBlocksInBlast(world, blast.position, crater)) {
                 rebuildMeshes(world, opaque, transparentMesh);
                 satelliteFeedDirty = true;
@@ -3898,11 +4169,11 @@ int main() {
         const bool rocketTwoWasActive = rocketTwo.active;
         updateRocket(world, rocketTwo, blastTwo, simDt, false);
         if (rocketTwoWasActive && !rocketTwo.active && blastTwo.active && blastTwo.age == 0.0f) {
-            const float crater = blastTwo.atomic ? 9.5f : 5.8f;
-            const float damageRadius = blastTwo.atomic ? 13.0f : 7.5f;
+            const float crater = blastTwo.atomic ? 14.5f : 5.8f;
+            const float damageRadius = blastTwo.atomic ? 20.0f : 7.5f;
             collectResourcesInBlast(world, playerTwo, blastTwo.position, crater);
             applyBlastDamage(world, player, false, playerTwo, blastTwo.position, damageRadius);
-            applyBlastDamage(world, playerTwo, true, player, blastTwo.position, blastTwo.atomic ? 8.0f : 5.0f);
+            applyBlastDamage(world, playerTwo, true, player, blastTwo.position, blastTwo.atomic ? 12.0f : 5.0f);
             if (destroyBlocksInBlast(world, blastTwo.position, crater)) {
                 rebuildMeshes(world, opaque, transparentMesh);
                 satelliteFeedDirty = true;
@@ -3910,6 +4181,8 @@ int main() {
         }
         updateBlast(blast, simDt);
         updateBlast(blastTwo, simDt);
+        updateShotgunBlast(shotgunBlast, simDt);
+        updateShotgunBlast(shotgunBlastTwo, simDt);
         const bool rocketBlocksTools = playerMissileMode || playerShotgunMode || rocket.active;
         const bool p2MineBuildMode = playerTwoToolMode == ToolMode::MineBuild;
 
@@ -4027,6 +4300,7 @@ int main() {
                 glUseProgram(skyProgram);
                 glUniform1f(skyTimeUniform, renderTime);
                 glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
+                glUniform1i(skyFidelityUniform, graphicsFidelityValue(currentGraphicsFidelity));
                 glBindVertexArray(emptyVao);
                 glDrawArrays(GL_TRIANGLES, 0, 3);
                 glEnable(GL_DEPTH_TEST);
@@ -4093,6 +4367,7 @@ int main() {
             glUseProgram(skyProgram);
             glUniform1f(skyTimeUniform, renderTime);
             glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
+            glUniform1i(skyFidelityUniform, graphicsFidelityValue(currentGraphicsFidelity));
             glBindVertexArray(emptyVao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glEnable(GL_DEPTH_TEST);
@@ -4107,6 +4382,8 @@ int main() {
             drawRocketFlame(lineUniform, lineVao, lineVbo, vpSingle, rocketTwo, renderTime);
             drawBlast(lineUniform, lineVao, lineVbo, vpSingle, blast);
             drawBlast(lineUniform, lineVao, lineVbo, vpSingle, blastTwo);
+            drawShotgunBlast(lineUniform, lineVao, lineVbo, vpSingle, shotgunBlast, renderTime);
+            drawShotgunBlast(lineUniform, lineVao, lineVbo, vpSingle, shotgunBlastTwo, renderTime);
             glDisable(GL_BLEND);
 
             if (!watchingPlayerTwo && p1CanMineBuild && !rocketBlocksTools && hasHit) {
@@ -4134,7 +4411,7 @@ int main() {
                 else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
                 drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
                 const float shotgunProgressTwo = std::clamp(playerTwo.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
-                drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, true);
+                drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, playerTwoToolMode == ToolMode::AtomicMissile, shotgunProgressTwo, renderTime, true);
             } else {
                 if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, width, height);
                 else drawSatelliteFeed(textureUniform, satelliteCamera.color, width, height, renderTime);
@@ -4144,7 +4421,7 @@ int main() {
                 else drawSmallReticle(uiProgram, uiVao, uiVbo);
                 drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
                 const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
-                drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, shotgunProgress, renderTime);
+                drawHand(uiProgram, uiVao, uiVbo, false, false, playerShotgunMode, playerMissileMode, playerToolMode == ToolMode::AtomicMissile, shotgunProgress, renderTime);
             }
             glDisable(GL_BLEND);
             glEnable(GL_CULL_FACE);
@@ -4155,6 +4432,7 @@ int main() {
         glUseProgram(skyProgram);
         glUniform1f(skyTimeUniform, renderTime);
         glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
+        glUniform1i(skyFidelityUniform, graphicsFidelityValue(currentGraphicsFidelity));
         glBindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glEnable(GL_DEPTH_TEST);
@@ -4173,6 +4451,8 @@ int main() {
         drawRocketFlame(lineUniform, lineVao, lineVbo, vp, rocketTwo, renderTime);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blastTwo);
+        drawShotgunBlast(lineUniform, lineVao, lineVbo, vp, shotgunBlast, renderTime);
+        drawShotgunBlast(lineUniform, lineVao, lineVbo, vp, shotgunBlastTwo, renderTime);
         glDisable(GL_BLEND);
 
         float interactionProgress = 0.0f;
@@ -4203,7 +4483,7 @@ int main() {
         else drawSmallReticle(uiProgram, uiVao, uiVbo);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
         const float shotgunProgress = std::clamp(player.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
-        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime);
+        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerShotgunMode, playerMissileMode, playerToolMode == ToolMode::AtomicMissile, playerShotgunMode ? shotgunProgress : interactionProgress, renderTime);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
@@ -4213,6 +4493,7 @@ int main() {
         glUseProgram(skyProgram);
         glUniform1f(skyTimeUniform, renderTime);
         glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
+        glUniform1i(skyFidelityUniform, graphicsFidelityValue(currentGraphicsFidelity));
         glBindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glEnable(GL_DEPTH_TEST);
@@ -4231,6 +4512,8 @@ int main() {
         drawRocketFlame(lineUniform, lineVao, lineVbo, vpTwo, rocketTwo, renderTime);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blastTwo);
+        drawShotgunBlast(lineUniform, lineVao, lineVbo, vpTwo, shotgunBlast, renderTime);
+        drawShotgunBlast(lineUniform, lineVao, lineVbo, vpTwo, shotgunBlastTwo, renderTime);
         glDisable(GL_BLEND);
 
         glDisable(GL_DEPTH_TEST);
@@ -4244,7 +4527,7 @@ int main() {
         else drawSmallReticle(uiProgram, uiVao, uiVbo, true);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
         const float shotgunProgressTwo = std::clamp(playerTwo.shotgunFlashTimer / 0.18f, 0.0f, 1.0f);
-        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, shotgunProgressTwo, renderTime, true);
+        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoShotgunMode, playerTwoMissileMode, playerTwoToolMode == ToolMode::AtomicMissile, shotgunProgressTwo, renderTime, true);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
