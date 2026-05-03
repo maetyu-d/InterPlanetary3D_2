@@ -197,6 +197,7 @@ constexpr float HardBuildTime = 0.62f;
 constexpr std::size_t MaxUiVertices = 100000;
 constexpr std::size_t MaxLineVertices = 2048;
 constexpr double CameraFeedRefreshInterval = 1.0 / 120.0;
+constexpr int StartingResourceCount = 5;
 constexpr const char* GameTitle = "InterPlanetary 3D";
 constexpr const char* GameTitleCaps = "INTERPLANETARY 3D";
 
@@ -525,8 +526,8 @@ struct Player {
     float coyoteTimer = 0.0f;
     float jumpBufferTimer = 0.0f;
     int health = 100;
-    int fuel = 3;
-    int plutonium = 3;
+    int fuel = StartingResourceCount;
+    int plutonium = StartingResourceCount;
     int score = 0;
     float rocketCooldown = 0.0f;
     float shotgunCooldown = 0.0f;
@@ -4083,10 +4084,10 @@ int main() {
         respawnPlayer(world, playerTwo, true);
         player.health = 100;
         playerTwo.health = 100;
-        player.fuel = 3;
-        player.plutonium = 3;
-        playerTwo.fuel = 3;
-        playerTwo.plutonium = 3;
+        player.fuel = StartingResourceCount;
+        player.plutonium = StartingResourceCount;
+        playerTwo.fuel = StartingResourceCount;
+        playerTwo.plutonium = StartingResourceCount;
         player.rocketCooldown = 0.0f;
         playerTwo.rocketCooldown = 0.0f;
         player.shotgunCooldown = 0.0f;
