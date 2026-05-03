@@ -29,11 +29,8 @@ The game opens on a title screen. Use arrow keys or `WASD` to choose game type, 
 - Left click in missile or atomic missile mode to fire; after one second, the top-right feed switches to the missile nose camera
 - Rockets cost 1 fuel and 1 plutonium; atomic rockets cost 5 fuel and 5 plutonium
 - Mine fuel/plutonium or blast resource pockets to collect resources
-- `G` to cycle game type: first to three kills, 10-turn build/attack phases, or alternating hunter
 - `O` to cycle the satellite between current-face, opposite-face, and polar orbits
 - `-` and `=` to lower/raise the satellite orbit
-- `T` to cycle dead, desert, lush green, and brutalist city worlds
-- `R` to regenerate the world
 - `F1` to release/capture the mouse
 - `Esc` to quit
 

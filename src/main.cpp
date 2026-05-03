@@ -16,6 +16,7 @@
 #include <chrono>
 #include <random>
 #include <string>
+#include <cctype>
 #include <vector>
 
 namespace {
@@ -219,6 +220,11 @@ enum class P2Control {
 enum class GameScreen {
     Title,
     Playing
+};
+
+enum class QuitChoice {
+    No,
+    Yes
 };
 
 struct MatchState {
@@ -2184,6 +2190,79 @@ void drawTitleScreen(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, WorldTheme th
     glBindVertexArray(0);
 }
 
+void drawMatchHud(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, const MatchState& match, const Player& player, const Player& playerTwo, double now, int secondsRemaining) {
+    std::vector<UiVertex> vertices;
+    vertices.reserve(2800);
+    std::string mode = "FIRST 3";
+    if (match.type == GameType::PhasedTurns) mode = "10 TURNS";
+    if (match.type == GameType::AlternatingHunter) mode = "HUNTER";
+
+    std::string phase = turnPhaseName(match, now);
+    std::transform(phase.begin(), phase.end(), phase.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    if (phase == "BUILD/MINE") phase = "BUILD";
+    if (phase == "ATTACK/HIDE") phase = "ATTACK";
+
+    const int minutes = std::max(0, secondsRemaining) / 60;
+    const int seconds = std::max(0, secondsRemaining) % 60;
+    std::string timeText = std::to_string(minutes) + ":" + (seconds < 10 ? "0" : "") + std::to_string(seconds);
+    if (match.suddenDeath) timeText = "SD";
+    if (match.over) timeText = "END";
+
+    auto addHud = [&](float halfX, const std::string& score, std::array<float, 4> accent) {
+        const std::string text = mode + "  " + phase + "  " + score + "  " + timeText;
+        const float x = halfX + 0.030f;
+        addUiRect(vertices, x, 0.900f, 0.205f, 0.036f, {0.0f, 0.0f, 0.0f, 0.58f});
+        addUiRect(vertices, x, 0.936f, 0.205f, 0.003f, accent);
+        addUiText(vertices, x + 0.010f, 0.911f, 0.00215f, text, {0.78f, 1.0f, 0.84f, 0.92f});
+    };
+    addHud(0.0f, std::to_string(player.score) + "-" + std::to_string(playerTwo.score), {1.0f, 0.30f, 0.08f, 0.48f});
+    addHud(0.5f, std::to_string(playerTwo.score) + "-" + std::to_string(player.score), {0.15f, 0.55f, 1.0f, 0.48f});
+
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    if (vertices.size() > MaxUiVertices) vertices.resize(MaxUiVertices);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
+void drawQuitPrompt(GLuint uiProgram, GLuint uiVao, GLuint uiVbo, QuitChoice choice) {
+    std::vector<UiVertex> vertices;
+    vertices.reserve(2400);
+    const std::array<float, 4> text{0.86f, 1.0f, 0.90f, 0.98f};
+    const std::array<float, 4> muted{0.36f, 0.62f, 0.50f, 0.92f};
+    const std::array<float, 4> green{0.25f, 1.0f, 0.55f, 0.90f};
+    const std::array<float, 4> red{0.95f, 0.18f, 0.055f, 0.90f};
+
+    addUiRect(vertices, 0.0f, 0.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f, 0.46f});
+    const bool noSelected = choice == QuitChoice::No;
+    auto addPrompt = [&](float halfX) {
+        const float x = halfX + 0.145f;
+        const float cx = halfX + 0.250f;
+        addUiRect(vertices, x, 0.405f, 0.210f, 0.180f, {0.0f, 0.0f, 0.0f, 0.80f});
+        addUiRect(vertices, x, 0.405f, 0.005f, 0.180f, choice == QuitChoice::Yes ? red : green);
+        addUiTextCentered(vertices, cx, 0.435f, 0.00305f, "QUIT MATCH", text);
+        addUiRect(vertices, cx - 0.070f, 0.492f, 0.054f, 0.044f, noSelected ? std::array<float, 4>{0.04f, 0.18f, 0.10f, 0.88f} : std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.40f});
+        addUiRect(vertices, cx + 0.017f, 0.492f, 0.054f, 0.044f, noSelected ? std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.40f} : std::array<float, 4>{0.20f, 0.035f, 0.025f, 0.88f});
+        addUiTextCentered(vertices, cx - 0.043f, 0.507f, 0.00295f, "NO", noSelected ? green : muted);
+        addUiTextCentered(vertices, cx + 0.044f, 0.507f, 0.00295f, "YES", noSelected ? muted : red);
+        addUiTextCentered(vertices, cx, 0.560f, 0.00185f, "LEFT RIGHT ENTER", muted);
+    };
+    addPrompt(0.0f);
+    addPrompt(0.5f);
+
+    glUseProgram(uiProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVbo);
+    if (vertices.size() > MaxUiVertices) vertices.resize(MaxUiVertices);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data());
+    glBindVertexArray(uiVao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size()));
+    glBindVertexArray(0);
+}
+
 void addHudDigit(std::vector<UiVertex>& vertices, float x, float y, float size, int digit, std::array<float, 4> color) {
     const float t = size * 0.16f;
     const float w = size * 0.62f;
@@ -3254,6 +3333,7 @@ int main() {
 
     BuildType selectedBuild = BuildType::Normal;
     double lastTime = glfwGetTime();
+    double gameTime = 0.0;
     Vec3 miningTarget{-9999.0f, -9999.0f, -9999.0f};
     Vec3 buildingTarget{-9999.0f, -9999.0f, -9999.0f};
     float miningTimer = 0.0f;
@@ -3274,12 +3354,14 @@ int main() {
     Blast blast;
     Blast blastTwo;
     MatchState match;
-    match.startedAt = lastTime;
+    match.startedAt = gameTime;
     match.firstHunter = (world.seed & 1) ? 1 : 2;
     GameScreen screen = GameScreen::Title;
     P2Control p2Control = P2Control::Keyboard;
     int titleRow = 0;
-    auto resetMatch = [&](double now) {
+    bool quitPrompt = false;
+    QuitChoice quitChoice = QuitChoice::No;
+    auto resetMatch = [&](double gameNow) {
         player.score = 0;
         playerTwo.score = 0;
         respawnPlayer(world, player);
@@ -3290,30 +3372,33 @@ int main() {
         player.plutonium = 3;
         playerTwo.fuel = 3;
         playerTwo.plutonium = 3;
-        match.startedAt = now;
+        match.startedAt = gameNow;
         match.suddenDeath = false;
         match.over = false;
         match.winner = 0;
-        match.firstHunter = ((world.seed + static_cast<int>(now * 10.0)) & 1) ? 1 : 2;
+        match.firstHunter = ((world.seed + static_cast<int>(gameNow * 10.0)) & 1) ? 1 : 2;
         rocket.active = false;
         rocketTwo.active = false;
         blast.active = false;
         blastTwo.active = false;
         satelliteFeedDirty = true;
     };
-    auto startGame = [&](double now) {
-        resetMatch(now);
+    auto startGame = [&]() {
+        gameTime = 0.0;
+        resetMatch(gameTime);
         screen = GameScreen::Playing;
+        quitPrompt = false;
+        quitChoice = QuitChoice::No;
         mouseCaptured = true;
         firstMouse = true;
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     };
-    auto rebuildSelectedWorld = [&](double now) {
+    auto rebuildSelectedWorld = [&]() {
         generateWorld(world);
         rebuildMeshes(world, opaque, transparentMesh);
         forcefieldY = forcefieldPlaneY(world);
         rebuildForcefieldMesh(world, forcefieldMesh);
-        resetMatch(now);
+        resetMatch(gameTime);
     };
 
     glEnable(GL_DEPTH_TEST);
@@ -3325,8 +3410,8 @@ int main() {
         lastTime = now;
 
         glfwPollEvents();
-        if (keyPressed(GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
         if (screen == GameScreen::Title) {
+            if (keyPressed(GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
             if (keyPressed(GLFW_KEY_UP) || keyPressed(GLFW_KEY_W) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_UP)) titleRow = (titleRow + 2) % 3;
             if (keyPressed(GLFW_KEY_DOWN) || keyPressed(GLFW_KEY_S) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) titleRow = (titleRow + 1) % 3;
             const bool previousChoice = keyPressed(GLFW_KEY_LEFT) || keyPressed(GLFW_KEY_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_LEFT);
@@ -3336,13 +3421,13 @@ int main() {
                 else if (titleRow == 1) {
                     world.theme = previousChoice ? previousTheme(world.theme) : nextTheme(world.theme);
                     world.seed += previousChoice ? 5297 : 7331;
-                    rebuildSelectedWorld(now);
+                    rebuildSelectedWorld();
                 } else {
                     p2Control = p2Control == P2Control::Keyboard ? P2Control::Gamepad : P2Control::Keyboard;
                 }
             }
             if (keyPressed(GLFW_KEY_ENTER) || keyPressed(GLFW_KEY_SPACE) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_START)) {
-                startGame(now);
+                startGame();
             }
 
             int width = 1;
@@ -3367,53 +3452,70 @@ int main() {
             glfwSwapBuffers(window);
             continue;
         }
-        if (keyPressed(GLFW_KEY_F1)) {
+        if (quitPrompt) {
+            if (keyPressed(GLFW_KEY_LEFT) || keyPressed(GLFW_KEY_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_LEFT)) quitChoice = QuitChoice::No;
+            if (keyPressed(GLFW_KEY_RIGHT) || keyPressed(GLFW_KEY_D) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT)) quitChoice = QuitChoice::Yes;
+            if (keyPressed(GLFW_KEY_ESCAPE) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_B)) {
+                quitPrompt = false;
+                quitChoice = QuitChoice::No;
+                mouseCaptured = true;
+                firstMouse = true;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            }
+            if (keyPressed(GLFW_KEY_ENTER) || keyPressed(GLFW_KEY_SPACE) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_A) || gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_START)) {
+                if (quitChoice == QuitChoice::Yes) {
+                    screen = GameScreen::Title;
+                    quitPrompt = false;
+                    quitChoice = QuitChoice::No;
+                    mouseCaptured = false;
+                    firstMouse = true;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                } else {
+                    quitPrompt = false;
+                    mouseCaptured = true;
+                    firstMouse = true;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                }
+            }
+        } else if (keyPressed(GLFW_KEY_ESCAPE)) {
+            quitPrompt = true;
+            quitChoice = QuitChoice::No;
+            mouseCaptured = false;
+            firstMouse = true;
+            pendingMouseLook = {};
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+        const bool gamePaused = quitPrompt;
+        const float simDt = gamePaused ? 0.0f : dt;
+        gameTime += static_cast<double>(simDt);
+        const float renderTime = static_cast<float>(gameTime);
+
+        if (!gamePaused && keyPressed(GLFW_KEY_F1)) {
             mouseCaptured = !mouseCaptured;
             firstMouse = true;
             glfwSetInputMode(window, GLFW_CURSOR, mouseCaptured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
         }
-        if (keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
-        if (keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
-        if (keyPressed(GLFW_KEY_G)) {
-            match.type = nextGameType(match.type);
-            resetMatch(now);
-        }
-        if (keyPressed(GLFW_KEY_T)) {
-            world.theme = nextTheme(world.theme);
-            world.seed += 7331;
-            generateWorld(world);
-            rebuildMeshes(world, opaque, transparentMesh);
-            forcefieldY = forcefieldPlaneY(world);
-            rebuildForcefieldMesh(world, forcefieldMesh);
-            resetMatch(now);
-        }
-        if (keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode);
-        if (keyPressed(GLFW_KEY_P) || (p2Control == P2Control::Gamepad && gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_Y))) playerTwoToolMode = nextToolMode(playerTwoToolMode);
-        if (keyPressed(GLFW_KEY_MINUS)) {
+        if (!gamePaused && keyPressed(GLFW_KEY_1)) selectedBuild = BuildType::Normal;
+        if (!gamePaused && keyPressed(GLFW_KEY_2)) selectedBuild = BuildType::Hard;
+        if (!gamePaused && keyPressed(GLFW_KEY_M)) playerToolMode = nextToolMode(playerToolMode);
+        if (!gamePaused && (keyPressed(GLFW_KEY_P) || (p2Control == P2Control::Gamepad && gamepadButtonPressed(GLFW_GAMEPAD_BUTTON_Y)))) playerTwoToolMode = nextToolMode(playerTwoToolMode);
+        if (!gamePaused && keyPressed(GLFW_KEY_MINUS)) {
             targetSatelliteOrbitHeight = std::max(16.0f, targetSatelliteOrbitHeight - 8.0f);
             satelliteFeedDirty = true;
         }
-        if (keyPressed(GLFW_KEY_EQUAL)) {
+        if (!gamePaused && keyPressed(GLFW_KEY_EQUAL)) {
             targetSatelliteOrbitHeight = std::min(140.0f, targetSatelliteOrbitHeight + 8.0f);
             satelliteFeedDirty = true;
         }
-        if (keyPressed(GLFW_KEY_O)) {
+        if (!gamePaused && keyPressed(GLFW_KEY_O)) {
             satelliteOrbit = nextOrbit(satelliteOrbit);
             satelliteFeedDirty = true;
         }
-        if (keyPressed(GLFW_KEY_R)) {
-            world.seed += 1337;
-            generateWorld(world);
-            rebuildMeshes(world, opaque, transparentMesh);
-            forcefieldY = forcefieldPlaneY(world);
-            rebuildForcefieldMesh(world, forcefieldMesh);
-            resetMatch(now);
-        }
 
-        satelliteOrbitHeight += (targetSatelliteOrbitHeight - satelliteOrbitHeight) * std::min(1.0f, dt * 2.4f);
+        satelliteOrbitHeight += (targetSatelliteOrbitHeight - satelliteOrbitHeight) * std::min(1.0f, simDt * 2.4f);
         if (std::abs(targetSatelliteOrbitHeight - satelliteOrbitHeight) > 0.05f) satelliteFeedDirty = true;
 
-        const double matchElapsed = now - match.startedAt;
+        const double matchElapsed = gameTime - match.startedAt;
         if (!match.over && !match.suddenDeath) {
             if (match.type == GameType::FirstToThree && matchElapsed >= 600.0 && player.score < 3 && playerTwo.score < 3) {
                 match.suddenDeath = true;
@@ -3443,8 +3545,8 @@ int main() {
         const bool phasedBuildTurn = match.type == GameType::PhasedTurns && !match.suddenDeath && !match.over
             && (std::clamp(static_cast<int>(matchElapsed / 60.0), 0, 9) % 2) == 0;
         const bool phasedAttackTurn = match.type == GameType::PhasedTurns && !match.suddenDeath && !match.over && !phasedBuildTurn;
-        const bool p1CanAct = !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 1);
-        const bool p2CanAct = !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 2);
+        const bool p1CanAct = !gamePaused && !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 1);
+        const bool p2CanAct = !gamePaused && !match.over && (match.type != GameType::AlternatingHunter || activeHunter == 2);
         const bool p1CanMove = p1CanAct;
         const bool p2CanMove = p2CanAct;
         const bool p1CanMineBuild = p1CanAct && (match.type != GameType::PhasedTurns || match.suddenDeath || phasedBuildTurn);
@@ -3452,12 +3554,12 @@ int main() {
         const bool p2CanAttack = p2CanAct && (match.type != GameType::PhasedTurns || match.suddenDeath || phasedAttackTurn);
 
         const bool missileGuided = rocket.active && rocket.age >= 1.0f;
-        updatePlayer(world, player, dt, forcefieldY, p1CanMove && !missileGuided, p1CanMove);
-        updatePlayerTwo(world, playerTwo, dt, forcefieldY, p2CanMove, p2Control);
+        updatePlayer(world, player, simDt, forcefieldY, p1CanMove && !missileGuided, p1CanMove && !gamePaused);
+        updatePlayerTwo(world, playerTwo, simDt, forcefieldY, p2CanMove && !gamePaused, p2Control);
         const Vec3 eye{player.position.x, player.position.y + player.upSign * PlayerHeight * 0.88f, player.position.z};
         const Vec3 look = forwardFromAngles(player.yaw, player.pitch);
-        const Vec3 satellitePosition = satellitePositionAt(world, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
-        const Vec3 satellitePositionTwo = satellitePositionAt(world, static_cast<float>(now) + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
+        const Vec3 satellitePosition = satellitePositionAt(world, renderTime, satelliteOrbit, satelliteOrbitHeight);
+        const Vec3 satellitePositionTwo = satellitePositionAt(world, renderTime + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
 
         Vec3 hit{};
         Vec3 previous{};
@@ -3468,12 +3570,12 @@ int main() {
         const bool playerMissileMode = playerToolMode == ToolMode::Missile || playerToolMode == ToolMode::AtomicMissile;
         const bool rocketFirePressed = p1CanAttack && playerMissileMode && leftDown && !wasRocketFireDown;
         wasRocketFireDown = p1CanAttack && playerMissileMode && leftDown;
-        player.rocketCooldown = std::max(0.0f, player.rocketCooldown - dt);
-        playerTwo.rocketCooldown = std::max(0.0f, playerTwo.rocketCooldown - dt);
-        player.hurtTimer = std::max(0.0f, player.hurtTimer - dt);
-        playerTwo.hurtTimer = std::max(0.0f, playerTwo.hurtTimer - dt);
-        toolHitCooldown = std::max(0.0f, toolHitCooldown - dt);
-        toolHitCooldownTwo = std::max(0.0f, toolHitCooldownTwo - dt);
+        player.rocketCooldown = std::max(0.0f, player.rocketCooldown - simDt);
+        playerTwo.rocketCooldown = std::max(0.0f, playerTwo.rocketCooldown - simDt);
+        player.hurtTimer = std::max(0.0f, player.hurtTimer - simDt);
+        playerTwo.hurtTimer = std::max(0.0f, playerTwo.hurtTimer - simDt);
+        toolHitCooldown = std::max(0.0f, toolHitCooldown - simDt);
+        toolHitCooldownTwo = std::max(0.0f, toolHitCooldownTwo - simDt);
         const int scoreBeforeCombatOne = player.score;
         const int scoreBeforeCombatTwo = playerTwo.score;
         const bool playerAtomic = playerToolMode == ToolMode::AtomicMissile;
@@ -3500,7 +3602,7 @@ int main() {
             satelliteFeedDirty = true;
         }
         const bool rocketWasActive = rocket.active;
-        updateRocket(world, rocket, blast, dt, rocket.active && rocket.age >= 1.0f);
+        updateRocket(world, rocket, blast, simDt, rocket.active && rocket.age >= 1.0f);
         if (rocketWasActive && !rocket.active && blast.active && blast.age == 0.0f) {
             const float crater = blast.atomic ? 9.5f : 5.8f;
             const float damageRadius = blast.atomic ? 13.0f : 7.5f;
@@ -3513,7 +3615,7 @@ int main() {
             }
         }
         const bool rocketTwoWasActive = rocketTwo.active;
-        updateRocket(world, rocketTwo, blastTwo, dt, false);
+        updateRocket(world, rocketTwo, blastTwo, simDt, false);
         if (rocketTwoWasActive && !rocketTwo.active && blastTwo.active && blastTwo.age == 0.0f) {
             const float crater = blastTwo.atomic ? 9.5f : 5.8f;
             const float damageRadius = blastTwo.atomic ? 13.0f : 7.5f;
@@ -3525,11 +3627,11 @@ int main() {
                 satelliteFeedDirty = true;
             }
         }
-        updateBlast(blast, dt);
-        updateBlast(blastTwo, dt);
+        updateBlast(blast, simDt);
+        updateBlast(blastTwo, simDt);
         const bool rocketBlocksTools = playerMissileMode || rocket.active;
 
-        buildCooldown = std::max(0.0f, buildCooldown - dt);
+        buildCooldown = std::max(0.0f, buildCooldown - simDt);
         if (p1CanAttack && !rocketBlocksTools && mouseCaptured && (leftDown || rightDown) && toolHitCooldown <= 0.0f && rayHitsPlayer(eye, look, playerTwo, 4.0f)) {
             applyToolDamage(world, playerTwo, true, player, rightDown ? 18 : 12);
             toolHitCooldown = 0.42f;
@@ -3544,7 +3646,7 @@ int main() {
                 miningTarget = hit;
                 miningTimer = 0.0f;
             }
-            miningTimer += dt;
+            miningTimer += simDt;
             const Block targetBlock = world.get(static_cast<int>(hit.x), static_cast<int>(hit.y), static_cast<int>(hit.z));
             if (miningTimer >= mineDuration(targetBlock)) {
                 collectResource(player, targetBlock);
@@ -3569,7 +3671,7 @@ int main() {
                     buildingTimer = 0.0f;
                 }
                 if (buildCooldown <= 0.0f && world.get(x, y, z) == Block::Air) {
-                    buildingTimer += dt;
+                    buildingTimer += simDt;
                     if (buildingTimer >= buildDuration(selectedBuild)) {
                         world.set(x, y, z, blockForBuildType(selectedBuild, world.theme));
                         if (playerCollides(world, player.position)) world.set(x, y, z, Block::Air);
@@ -3616,7 +3718,7 @@ int main() {
         const SatelliteView liveSatelliteViewTwo = makeSatelliteView(satellitePositionTwo);
 
         const bool missileCameraActive = rocket.active && rocket.age >= 1.0f;
-        if (satelliteFeedDirty || missileCameraActive || now - lastSatelliteFeedTime >= 0.12) {
+        if (satelliteFeedDirty || missileCameraActive || gameTime - lastSatelliteFeedTime >= 0.12) {
             resizeSatelliteCamera(satelliteCamera, missileCameraActive ? satelliteCamera.missileSize : satelliteCamera.satelliteSize);
             glBindFramebuffer(GL_FRAMEBUFFER, satelliteCamera.framebuffer);
             glViewport(0, 0, satelliteCamera.size, satelliteCamera.size);
@@ -3627,7 +3729,7 @@ int main() {
                 const Vec3 missileTarget = missileEye + rocket.direction;
                 glDisable(GL_DEPTH_TEST);
                 glUseProgram(skyProgram);
-                glUniform1f(skyTimeUniform, static_cast<float>(now));
+                glUniform1f(skyTimeUniform, renderTime);
                 glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
                 glBindVertexArray(emptyVao);
                 glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3635,12 +3737,12 @@ int main() {
                 const Mat4 missileProj = perspective(58.0f * Pi / 180.0f, 1.0f, 0.05f, 220.0f);
                 const Mat4 missileView = lookAt(missileEye, missileTarget, rocket.up);
                 const Mat4 missileVp = multiply(missileProj, missileView);
-                drawVoxelScene(voxelUniform, missileVp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, missileEye, rocket.direction, static_cast<float>(now), 1.0f, true);
-                drawForcefield(forcefieldUniform, forcefieldMesh, missileVp, static_cast<float>(now), 1.0f);
+                drawVoxelScene(voxelUniform, missileVp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, missileEye, rocket.direction, renderTime, 1.0f, true);
+                drawForcefield(forcefieldUniform, forcefieldMesh, missileVp, renderTime, 1.0f);
             } else {
                 const SatelliteView satelliteView = makeSatelliteView(satellitePosition);
-                drawVoxelScene(satelliteUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, static_cast<float>(now), 0.0f, false);
-                drawForcefield(forcefieldUniform, forcefieldMesh, satelliteView.vp, static_cast<float>(now), 0.45f);
+                drawVoxelScene(satelliteUniform, satelliteView.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteView.position, satelliteView.down, renderTime, 0.0f, false);
+                drawForcefield(forcefieldUniform, forcefieldMesh, satelliteView.vp, renderTime, 0.45f);
                 glDisable(GL_DEPTH_TEST);
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -3651,18 +3753,18 @@ int main() {
                 glEnable(GL_DEPTH_TEST);
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            lastSatelliteFeedTime = now;
+            lastSatelliteFeedTime = gameTime;
             satelliteFeedDirty = false;
         }
-        if (satelliteFeedDirty || now - lastSatelliteFeedTimeTwo >= 0.12) {
+        if (satelliteFeedDirty || gameTime - lastSatelliteFeedTimeTwo >= 0.12) {
             resizeSatelliteCamera(satelliteCameraTwo, satelliteCameraTwo.satelliteSize);
             glBindFramebuffer(GL_FRAMEBUFFER, satelliteCameraTwo.framebuffer);
             glViewport(0, 0, satelliteCameraTwo.size, satelliteCameraTwo.size);
             glClearColor(0.018f, 0.014f, 0.012f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             const SatelliteView satelliteViewTwo = makeSatelliteView(satellitePositionTwo);
-            drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, static_cast<float>(now), 0.0f, false);
-            drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, static_cast<float>(now), 0.45f);
+            drawVoxelScene(satelliteUniform, satelliteViewTwo.vp, opaque, transparentMesh, nullptr, {}, nullptr, {}, {}, {}, satelliteViewTwo.position, satelliteViewTwo.down, renderTime, 0.0f, false);
+            drawForcefield(forcefieldUniform, forcefieldMesh, satelliteViewTwo.vp, renderTime, 0.45f);
             glDisable(GL_DEPTH_TEST);
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -3672,7 +3774,7 @@ int main() {
             glDisable(GL_BLEND);
             glEnable(GL_DEPTH_TEST);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            lastSatelliteFeedTimeTwo = now;
+            lastSatelliteFeedTimeTwo = gameTime;
         }
         const int leftWidth = std::max(1, width / 2);
         const int rightWidth = std::max(1, width - leftWidth);
@@ -3682,7 +3784,7 @@ int main() {
         glViewport(0, 0, leftWidth, height);
         glDisable(GL_DEPTH_TEST);
         glUseProgram(skyProgram);
-        glUniform1f(skyTimeUniform, static_cast<float>(now));
+        glUniform1f(skyTimeUniform, renderTime);
         glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
         glBindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3693,11 +3795,11 @@ int main() {
         const Mat4 vp = multiply(proj, view);
 
         const Rocket& visibleRocket = rocket.active ? rocket : rocketTwo;
-        drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eye, look, static_cast<float>(now));
-        drawForcefield(forcefieldUniform, forcefieldMesh, vp, static_cast<float>(now));
+        drawVoxelScene(voxelUniform, vp, opaque, transparentMesh, &satelliteMesh, satellitePosition, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eye, look, renderTime);
+        drawForcefield(forcefieldUniform, forcefieldMesh, vp, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, static_cast<float>(now), satelliteOrbit, satelliteOrbitHeight);
+        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vp, renderTime, satelliteOrbit, satelliteOrbitHeight);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vp, blastTwo);
         glDisable(GL_BLEND);
@@ -3714,7 +3816,7 @@ int main() {
                 interactionProgress = std::clamp(miningTimer / mineDuration(targetBlock), 0.0f, 1.0f);
                 showingMine = true;
             }
-            drawSelection(lineUniform, lineVao, lineVbo, vp, hit, previous, interactionProgress, showingBuild, static_cast<float>(now));
+            drawSelection(lineUniform, lineVao, lineVbo, vp, hit, previous, interactionProgress, showingBuild, renderTime);
         }
 
         glDisable(GL_DEPTH_TEST);
@@ -3723,13 +3825,13 @@ int main() {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindVertexArray(emptyVao);
         if (missileCameraActive) drawMissileFeed(missileFeedUniform, satelliteCamera.color, leftWidth, height);
-        else drawSatelliteFeed(textureUniform, satelliteCamera.color, leftWidth, height, static_cast<float>(now));
-        if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, leftWidth, height, static_cast<float>(now));
+        else drawSatelliteFeed(textureUniform, satelliteCamera.color, leftWidth, height, renderTime);
+        if (missileCameraActive) drawMissileHud(uiProgram, uiVao, uiVbo, rocket, leftWidth, height, renderTime);
         else drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteView.vp, player, playerTwo, leftWidth, height);
-        if (playerMissileMode || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, static_cast<float>(now));
+        if (playerMissileMode || rocket.active) drawReticle(uiProgram, uiVao, uiVbo, rocket.active && rocket.age >= 1.0f, renderTime);
         else drawSmallReticle(uiProgram, uiVao, uiVbo);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, player);
-        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerMissileMode, interactionProgress, static_cast<float>(now));
+        drawHand(uiProgram, uiVao, uiVbo, showingMine, showingBuild, playerMissileMode, interactionProgress, renderTime);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
@@ -3737,7 +3839,7 @@ int main() {
         glViewport(leftWidth, 0, rightWidth, height);
         glDisable(GL_DEPTH_TEST);
         glUseProgram(skyProgram);
-        glUniform1f(skyTimeUniform, static_cast<float>(now));
+        glUniform1f(skyTimeUniform, renderTime);
         glUniform1i(skyThemeUniform, themeShaderValue(world.theme));
         glBindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3748,11 +3850,11 @@ int main() {
         const Mat4 projTwo = perspective(68.0f * Pi / 180.0f, static_cast<float>(rightWidth) / static_cast<float>(height), 0.05f, 140.0f);
         const Mat4 viewTwo = lookAt(eyeTwo, eyeTwo + lookTwo, {0.0f, playerTwo.upSign, 0.0f});
         const Mat4 vpTwo = multiply(projTwo, viewTwo);
-        drawVoxelScene(voxelUniform, vpTwo, opaque, transparentMesh, &satelliteMesh, satellitePositionTwo, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eyeTwo, lookTwo, static_cast<float>(now));
-        drawForcefield(forcefieldUniform, forcefieldMesh, vpTwo, static_cast<float>(now));
+        drawVoxelScene(voxelUniform, vpTwo, opaque, transparentMesh, &satelliteMesh, satellitePositionTwo, visibleRocket.active ? &rocketMesh : nullptr, visibleRocket.position, visibleRocket.direction, visibleRocket.up, eyeTwo, lookTwo, renderTime);
+        drawForcefield(forcefieldUniform, forcefieldMesh, vpTwo, renderTime);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, static_cast<float>(now) + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
+        drawOrbitTrail(world, lineUniform, lineVao, lineVbo, vpTwo, renderTime + Pi / 0.22f, SatelliteOrbit::OppositeFace, satelliteOrbitHeight);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blast);
         drawBlast(lineUniform, lineVao, lineVbo, vpTwo, blastTwo);
         glDisable(GL_BLEND);
@@ -3762,11 +3864,11 @@ int main() {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBindVertexArray(emptyVao);
-        drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, rightWidth, height, static_cast<float>(now));
+        drawSatelliteFeed(textureUniform, satelliteCameraTwo.color, rightWidth, height, renderTime);
         drawSatellitePositionLabels(uiProgram, uiVao, uiVbo, liveSatelliteViewTwo.vp, player, playerTwo, rightWidth, height);
         drawSmallReticle(uiProgram, uiVao, uiVbo, true);
         drawPlayerStatus(uiProgram, uiVao, uiVbo, playerTwo, true);
-        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoMissileMode, 0.0f, static_cast<float>(now), true);
+        drawHand(uiProgram, uiVao, uiVbo, false, false, playerTwoMissileMode, 0.0f, renderTime, true);
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
@@ -3776,6 +3878,16 @@ int main() {
             if (match.type == GameType::FirstToThree) modeSecondsRemaining = std::max(0, 600 - static_cast<int>(matchElapsed));
             else modeSecondsRemaining = std::max(0, 60 - static_cast<int>(static_cast<int>(matchElapsed) % 60));
         }
+        glViewport(0, 0, width, height);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        drawMatchHud(uiProgram, uiVao, uiVbo, match, player, playerTwo, gameTime, modeSecondsRemaining);
+        if (quitPrompt) drawQuitPrompt(uiProgram, uiVao, uiVbo, quitChoice);
+        glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
+        glEnable(GL_DEPTH_TEST);
         glfwSetWindowTitle(window, "");
         glfwSwapBuffers(window);
     }
