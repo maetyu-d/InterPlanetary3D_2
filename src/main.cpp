@@ -436,7 +436,7 @@ struct SatelliteCamera {
     GLuint color = 0;
     GLuint depth = 0;
     int size = 0;
-    int satelliteSize = 512;
+    int satelliteSize = 1024;
     int missileSize = 512;
 };
 
@@ -3892,24 +3892,20 @@ float hash(vec2 p) {
 }
 void main() {
     vec2 uv = vUV;
-    float tear = step(0.996, hash(vec2(floor(uv.y * 44.0), floor(uTime * 7.0)))) * 0.005;
-    uv.x = clamp(uv.x + tear * sin(uv.y * 96.0 + uTime * 8.0), 0.0, 1.0);
+    float tear = step(0.999, hash(vec2(floor(uv.y * 52.0), floor(uTime * 4.0)))) * 0.0015;
+    uv.x = clamp(uv.x + tear * sin(uv.y * 128.0 + uTime * 5.0), 0.0, 1.0);
     vec3 color = texture(uTexture, uv).rgb;
     vec2 edge = min(vUV, 1.0 - vUV);
     float frame = 1.0 - smoothstep(0.012, 0.026, min(edge.x, edge.y));
-    float grey = dot(color, vec3(0.299, 0.587, 0.114));
-    float row = floor(vUV.y * 220.0);
-    float staticNoise = hash(vec2(floor(vUV.x * 260.0) + floor(uTime * 18.0), row));
-    float scan = sin(vUV.y * 960.0) * 0.012;
-    float band = smoothstep(0.024, 0.0, abs(fract(vUV.y * 4.0 + uTime * 0.22) - 0.5)) * 0.035;
-    float dropout = step(0.995, hash(vec2(row, floor(uTime * 5.0)))) * 0.10;
-    float signal = grey * 1.04 + staticNoise * 0.030 + scan - band - dropout;
-    vec3 cctv = mix(color * vec3(0.70, 1.05, 0.86), vec3(signal * 0.34, signal * 1.08, signal * 0.82), 0.30);
+    float row = floor(vUV.y * 420.0);
+    float staticNoise = hash(vec2(floor(vUV.x * 520.0) + floor(uTime * 12.0), row)) - 0.5;
+    float scan = sin(vUV.y * 1440.0) * 0.004;
+    float band = smoothstep(0.018, 0.0, abs(fract(vUV.y * 4.0 + uTime * 0.16) - 0.5)) * 0.010;
+    vec3 cctv = color * 1.10 + staticNoise * 0.008 + scan - band;
     float vignette = smoothstep(0.78, 0.18, distance(vUV, vec2(0.5)));
-    cctv *= 0.88 + vignette * 0.48;
-    cctv = pow(max(cctv, vec3(0.0)), vec3(0.82));
-    cctv = mix(cctv, floor(max(cctv, vec3(0.0)) * 96.0) / 96.0, 0.22);
-    cctv = mix(cctv, vec3(0.006, 0.012, 0.008), frame * 0.76);
+    cctv *= 0.94 + vignette * 0.30;
+    cctv = pow(max(cctv, vec3(0.0)), vec3(0.90));
+    cctv = mix(cctv, vec3(0.006, 0.008, 0.007), frame * 0.62);
     FragColor = vec4(cctv, 1.0);
 }
 )GLSL";
