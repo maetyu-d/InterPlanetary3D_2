@@ -171,7 +171,11 @@ enum class Block : std::uint8_t {
     Grass,
     Dirt,
     Wood,
-    Leaves
+    Leaves,
+    Concrete,
+    DarkConcrete,
+    Asphalt,
+    WindowGlass
 };
 
 enum class BuildType {
@@ -182,7 +186,8 @@ enum class BuildType {
 enum class WorldTheme {
     Dead,
     Desert,
-    Lush
+    Lush,
+    Brutalist
 };
 
 enum class SatelliteOrbit {
@@ -400,7 +405,7 @@ bool solid(Block block) {
 }
 
 bool transparent(Block block) {
-    return block == Block::Air || block == Block::DeadCrystal || block == Block::ObsidianGlass;
+    return block == Block::Air || block == Block::DeadCrystal || block == Block::ObsidianGlass || block == Block::WindowGlass;
 }
 
 bool spawnSurface(Block block) {
@@ -425,6 +430,10 @@ float blockKind(Block block) {
         case Block::Dirt: return 16.0f;
         case Block::Wood: return 17.0f;
         case Block::Leaves: return 18.0f;
+        case Block::Concrete: return 19.0f;
+        case Block::DarkConcrete: return 20.0f;
+        case Block::Asphalt: return 21.0f;
+        case Block::WindowGlass: return 22.0f;
         case Block::Air: break;
     }
     return 0.0f;
@@ -450,6 +459,10 @@ std::array<float, 4> colorOf(Block block, int x, int y, int z) {
         case Block::Dirt: c = {0.25f, 0.17f, 0.10f, 1.0f}; break;
         case Block::Wood: c = {0.34f, 0.20f, 0.10f, 1.0f}; break;
         case Block::Leaves: c = {0.08f, 0.42f, 0.10f, 1.0f}; speckle = 0.0f; break;
+        case Block::Concrete: c = {0.44f, 0.44f, 0.41f, 1.0f}; break;
+        case Block::DarkConcrete: c = {0.18f, 0.18f, 0.17f, 1.0f}; break;
+        case Block::Asphalt: c = {0.055f, 0.055f, 0.052f, 1.0f}; break;
+        case Block::WindowGlass: c = {0.12f, 0.17f, 0.19f, 0.58f}; speckle = 0.0f; break;
         case Block::Air: c = {0.0f, 0.0f, 0.0f, 0.0f}; break;
     }
     c[0] = std::clamp(c[0] + speckle, 0.0f, 1.0f);
@@ -461,6 +474,7 @@ std::array<float, 4> colorOf(Block block, int x, int y, int z) {
 Block blockForBuildType(BuildType type, WorldTheme theme) {
     if (theme == WorldTheme::Desert) return type == BuildType::Normal ? Block::Sand : Block::DesertRock;
     if (theme == WorldTheme::Lush) return type == BuildType::Normal ? Block::Dirt : Block::Wood;
+    if (theme == WorldTheme::Brutalist) return type == BuildType::Normal ? Block::Concrete : Block::DarkConcrete;
     return type == BuildType::Normal ? Block::Ash : Block::Basalt;
 }
 
@@ -473,6 +487,7 @@ const char* themeName(WorldTheme theme) {
         case WorldTheme::Dead: return "dead";
         case WorldTheme::Desert: return "desert";
         case WorldTheme::Lush: return "lush";
+        case WorldTheme::Brutalist: return "brutalist city";
     }
     return "dead";
 }
@@ -481,7 +496,8 @@ WorldTheme nextTheme(WorldTheme theme) {
     switch (theme) {
         case WorldTheme::Dead: return WorldTheme::Desert;
         case WorldTheme::Desert: return WorldTheme::Lush;
-        case WorldTheme::Lush: return WorldTheme::Dead;
+        case WorldTheme::Lush: return WorldTheme::Brutalist;
+        case WorldTheme::Brutalist: return WorldTheme::Dead;
     }
     return WorldTheme::Dead;
 }
@@ -491,6 +507,7 @@ int themeShaderValue(WorldTheme theme) {
         case WorldTheme::Dead: return 0;
         case WorldTheme::Desert: return 1;
         case WorldTheme::Lush: return 2;
+        case WorldTheme::Brutalist: return 3;
     }
     return 0;
 }
@@ -555,6 +572,10 @@ float mineDuration(Block block) {
         case Block::Dirt: duration = 0.45f; break;
         case Block::Wood: duration = 0.95f; break;
         case Block::Leaves: duration = 0.32f; break;
+        case Block::Concrete: duration = 0.95f; break;
+        case Block::DarkConcrete: duration = 1.20f; break;
+        case Block::Asphalt: duration = 0.70f; break;
+        case Block::WindowGlass: duration = 0.55f; break;
         case Block::Air: break;
     }
     return duration * MiningDifficulty;
@@ -571,7 +592,12 @@ int faceProfile(int face) {
     return 0;
 }
 
+int mirrorSourceFace(int face) {
+    return face == 1 ? 0 : face;
+}
+
 int faceTerrainHeight(int u, int v, int face, int seed, WorldTheme theme) {
+    face = mirrorSourceFace(face);
     const int profile = faceProfile(face);
     const float nx = static_cast<float>(u) / 22.0f;
     const float nz = static_cast<float>(v) / 22.0f;
@@ -595,6 +621,13 @@ int faceTerrainHeight(int u, int v, int face, int seed, WorldTheme theme) {
         height = (height / 2) * 2;
         return std::clamp(height, 5, FaceRelief - 5);
     }
+    if (theme == WorldTheme::Brutalist) {
+        const float slab = fractalNoise(nx * 0.55f + 8.0f, nz * 0.55f - 12.0f, seed + profile * 503 + 4201);
+        const float broken = fractalNoise(nx * 3.5f - 21.0f, nz * 3.5f + 9.0f, seed + profile * 503 + 4219);
+        int height = 8 + static_cast<int>(slab * 5.0f + broken * 3.0f);
+        height = (height / 2) * 2;
+        return std::clamp(height, 5, 18);
+    }
     const float continent = fractalNoise(nx, nz, seed + profile * 503);
     const float ridges = std::abs(fractalNoise(nx * 2.45f + 32.0f, nz * 2.45f - 8.0f, seed + profile * 503 + 7) - 0.5f) * 2.0f;
     const float pits = fractalNoise(nx * 3.0f - 11.0f, nz * 3.0f + 19.0f, seed + profile * 503 + 31);
@@ -608,6 +641,7 @@ int faceTerrainHeight(int u, int v, int face, int seed, WorldTheme theme) {
 }
 
 Block cubeFaceMaterial(int depth, int height, int u, int v, int face, int seed, WorldTheme theme) {
+    face = mirrorSourceFace(face);
     const int profile = faceProfile(face);
     const float vein = fractalNoise((u + depth * 3) / 7.0f, (v - depth * 2) / 7.0f, seed + profile * 503 + 99);
     const float resourceA = fractalNoise((u + profile * 19) / 5.5f, (v + depth * 2) / 5.5f, seed + profile * 701 + 211);
@@ -638,6 +672,16 @@ Block cubeFaceMaterial(int depth, int height, int u, int v, int face, int seed, 
         if (depth == 0) return Block::Grass;
         if (depth < 5) return Block::Dirt;
         return loam > 0.72f ? Block::PaleStone : Block::Dirt;
+    }
+    if (theme == WorldTheme::Brutalist) {
+        if (depth == 0) {
+            const bool roadX = (u % 16) < 3;
+            const bool roadV = (v % 16) < 3;
+            if (roadX || roadV) return Block::Asphalt;
+            return Block::Concrete;
+        }
+        if (depth < 4) return Block::Concrete;
+        return vein > 0.70f ? Block::DarkConcrete : Block::Concrete;
     }
     if (depth == 0) {
         if (height < 10) return hash2(u, v, seed + profile * 17 + 91) > 0.68f ? Block::ObsidianGlass : Block::Ash;
@@ -746,7 +790,8 @@ void setCell(World& world, Cell cell, Block block) {
 void addLushTree(World& world, int face, int u, int v) {
     Cell surface{}, normal{}, tangentU{}, tangentV{};
     if (!faceSurface(world, face, u, v, surface, normal, tangentU, tangentV)) return;
-    const int trunkHeight = 3 + static_cast<int>(hash2(u, v, world.seed + face * 97 + 3301) * 2.0f);
+    const int featureFace = face == 1 ? 0 : face;
+    const int trunkHeight = 3 + static_cast<int>(hash2(u, v, world.seed + featureFace * 97 + 3301) * 2.0f);
     for (int i = 1; i <= trunkHeight; ++i) {
         setCell(world, addCell(surface, normal, i), Block::Wood);
     }
@@ -768,10 +813,63 @@ void addLushTree(World& world, int face, int u, int v) {
 void addLushFeatures(World& world) {
     constexpr std::array<int, 6> faces{{0, 1, 2, 3, 4, 5}};
     for (int face : faces) {
+        const int featureFace = face == 1 ? 0 : face;
         for (int v = 8; v < WorldSize - 8; v += 11) {
             for (int u = 8; u < WorldSize - 8; u += 11) {
-                const float grove = hash2(u + face * 43, v - face * 29, world.seed + 3203);
+                const float grove = hash2(u + featureFace * 43, v - featureFace * 29, world.seed + 3203);
                 if (grove > 0.42f) addLushTree(world, face, u, v);
+            }
+        }
+    }
+}
+
+void addBrutalistTower(World& world, int face, int centerU, int centerV) {
+    Cell surface{}, normal{}, tangentU{}, tangentV{};
+    if (!faceSurface(world, face, centerU, centerV, surface, normal, tangentU, tangentV)) return;
+    const int featureFace = face == 1 ? 0 : face;
+    const int widthU = 3 + static_cast<int>(hash2(centerU, centerV, world.seed + featureFace * 71 + 5101) * 3.0f);
+    const int widthV = 3 + static_cast<int>(hash2(centerU, centerV, world.seed + featureFace * 73 + 5107) * 3.0f);
+    const int height = 10 + static_cast<int>(hash2(centerU, centerV, world.seed + featureFace * 79 + 5113) * 22.0f);
+    for (int dv = -widthV; dv <= widthV; ++dv) {
+        for (int du = -widthU; du <= widthU; ++du) {
+            const bool edge = std::abs(du) == widthU || std::abs(dv) == widthV;
+            for (int h = 1; h <= height; ++h) {
+                Cell cell = addCell(addCell(addCell(surface, normal, h), tangentU, du), tangentV, dv);
+                if (!world.inBounds(cell.x, cell.y, cell.z)) continue;
+                const bool windowBand = edge && h > 2 && (h % 3 == 1) && ((du + dv + featureFace) & 1) == 0;
+                world.set(cell.x, cell.y, cell.z, windowBand ? Block::WindowGlass : (edge ? Block::Concrete : Block::DarkConcrete));
+            }
+        }
+    }
+    for (int dv = -widthV - 1; dv <= widthV + 1; ++dv) {
+        for (int du = -widthU - 1; du <= widthU + 1; ++du) {
+            Cell roof = addCell(addCell(addCell(surface, normal, height + 1), tangentU, du), tangentV, dv);
+            if (world.inBounds(roof.x, roof.y, roof.z) && world.get(roof.x, roof.y, roof.z) == Block::Air) {
+                world.set(roof.x, roof.y, roof.z, Block::DarkConcrete);
+            }
+        }
+    }
+}
+
+void addBrutalistFeatures(World& world) {
+    constexpr std::array<int, 6> faces{{0, 1, 2, 3, 4, 5}};
+    for (int face : faces) {
+        const int featureFace = face == 1 ? 0 : face;
+        for (int v = 10; v < WorldSize - 10; v += 14) {
+            for (int u = 10; u < WorldSize - 10; u += 14) {
+                const float towerChance = hash2(u + featureFace * 61, v - featureFace * 37, world.seed + 5201);
+                if (towerChance > 0.48f) addBrutalistTower(world, face, u, v);
+            }
+        }
+    }
+}
+
+void mirrorP2HalfFromP1Half(World& world) {
+    for (int y = 0; y < WorldHeight / 2; ++y) {
+        const int sourceY = WorldHeight - 1 - y;
+        for (int z = 0; z < WorldSize; ++z) {
+            for (int x = 0; x < WorldSize; ++x) {
+                world.set(x, y, z, world.get(x, sourceY, z));
             }
         }
     }
@@ -780,7 +878,7 @@ void addLushFeatures(World& world) {
 void generateWorld(World& world) {
     std::fill(world.blocks.begin(), world.blocks.end(), Block::Air);
 
-    constexpr std::array<int, 6> faceOrder{{1, 2, 3, 4, 5, 0}};
+    constexpr std::array<int, 6> faceOrder{{2, 3, 4, 5, 0, 1}};
     for (int face : faceOrder) {
         for (int v = 0; v < WorldSize; ++v) {
             for (int u = 0; u < WorldSize; ++u) {
@@ -789,9 +887,18 @@ void generateWorld(World& world) {
         }
     }
 
-    if (world.theme == WorldTheme::Desert) return;
+    if (world.theme == WorldTheme::Desert) {
+        mirrorP2HalfFromP1Half(world);
+        return;
+    }
     if (world.theme == WorldTheme::Lush) {
         addLushFeatures(world);
+        mirrorP2HalfFromP1Half(world);
+        return;
+    }
+    if (world.theme == WorldTheme::Brutalist) {
+        addBrutalistFeatures(world);
+        mirrorP2HalfFromP1Half(world);
         return;
     }
 
@@ -800,13 +907,21 @@ void generateWorld(World& world) {
             int y = WorldHeight - 1;
             while (y > 1 && world.get(x, y, z) == Block::Air) --y;
             const Block surface = world.get(x, y, z);
+            Block decoration = Block::Air;
             if ((surface == Block::Ash || surface == Block::ObsidianGlass) && hash2(x, z, world.seed + 70) > 0.996f && world.inBounds(x, y + 1, z)) {
-                world.set(x, y + 1, z, Block::DeadCrystal);
+                decoration = Block::DeadCrystal;
             } else if ((surface == Block::Ash || surface == Block::BloodSoil) && hash2(x, z, world.seed + 64) > 0.988f && world.inBounds(x, y + 1, z)) {
-                world.set(x, y + 1, z, Block::Bone);
+                decoration = Block::Bone;
+            }
+            if (decoration != Block::Air) {
+                world.set(x, y + 1, z, decoration);
+                int bottomY = 0;
+                while (bottomY < WorldHeight - 2 && world.get(x, bottomY, z) == Block::Air) ++bottomY;
+                if (world.inBounds(x, bottomY - 1, z)) world.set(x, bottomY - 1, z, decoration);
             }
         }
     }
+    mirrorP2HalfFromP1Half(world);
 }
 
 Vec3 spawnPosition(const World& world) {
@@ -1133,7 +1248,7 @@ void rebuildMeshes(const World& world, Mesh& opaque, Mesh& transparentMesh) {
             for (int x = 0; x < WorldSize; ++x) {
                 const Block block = world.get(x, y, z);
                 if (block == Block::Air) continue;
-                if (block == Block::DeadCrystal || block == Block::ObsidianGlass) appendCube(transparentVertices, world, x, y, z, block);
+                if (block == Block::DeadCrystal || block == Block::ObsidianGlass || block == Block::WindowGlass) appendCube(transparentVertices, world, x, y, z, block);
                 else appendCube(opaqueVertices, world, x, y, z, block);
             }
         }
@@ -2411,6 +2526,21 @@ void main() {
         float leaf = fbm(p * 6.5);
         base = mix(vec3(0.030, 0.22, 0.035), vec3(0.16, 0.58, 0.11), leaf);
         alpha = 1.0;
+    } else if (kind == 19.0) {
+        float pores = fbm(p * 8.0);
+        float stain = cracks(p * 0.85);
+        base = mix(vec3(0.26, 0.26, 0.24), vec3(0.62, 0.62, 0.57), pores);
+        base *= 1.0 - stain * 0.22;
+    } else if (kind == 20.0) {
+        float grime = fbm(p * 5.4);
+        base = mix(vec3(0.09, 0.09, 0.085), vec3(0.28, 0.28, 0.26), grime);
+    } else if (kind == 21.0) {
+        float grit = fbm(p * 10.0);
+        base = mix(vec3(0.025, 0.025, 0.024), vec3(0.12, 0.12, 0.11), grit);
+    } else if (kind == 22.0) {
+        float reflection = smoothstep(0.35, 0.86, fbm(p * 3.0));
+        base = mix(vec3(0.035, 0.055, 0.065), vec3(0.28, 0.34, 0.36), reflection);
+        alpha = 0.62;
     }
 
     float grey = dot(base, vec3(0.299, 0.587, 0.114));
@@ -2566,6 +2696,20 @@ float fbm(vec2 p) {
 }
 void main() {
     vec2 uv = vUV;
+    if (uTheme == 3) {
+        float slow = uTime * 0.006;
+        float smog = fbm(uv * vec2(7.0, 3.5) + vec2(slow, -slow * 0.4));
+        float low = 1.0 - smoothstep(0.04, 0.58, uv.y);
+        vec3 horizon = vec3(0.38, 0.36, 0.32);
+        vec3 zenith = vec3(0.075, 0.078, 0.082);
+        vec3 color = mix(horizon, zenith, smoothstep(0.0, 1.0, uv.y));
+        color += vec3(0.16, 0.15, 0.13) * smog * low * 0.72;
+        vec2 sunPos = vec2(0.72, 0.16);
+        float sunDist = distance(uv, sunPos);
+        color += vec3(0.48, 0.38, 0.22) * pow(max(0.0, 0.28 - sunDist), 2.0) * 2.2;
+        FragColor = vec4(color, 1.0);
+        return;
+    }
     if (uTheme == 2) {
         float slow = uTime * 0.012;
         float cloud = fbm(uv * vec2(6.0, 3.0) + vec2(slow, 0.0));
