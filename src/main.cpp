@@ -3646,7 +3646,24 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
     glfwWindowHint(GLFW_SAMPLES, 0);
 
-    window = glfwCreateWindow(1280, 800, "", nullptr, nullptr);
+    int windowWidth = 1280;
+    int windowHeight = 800;
+    GLFWmonitor* fullscreenMonitor = glfwGetPrimaryMonitor();
+    if (fullscreenMonitor) {
+        const GLFWvidmode* mode = glfwGetVideoMode(fullscreenMonitor);
+        if (mode) {
+            windowWidth = mode->width;
+            windowHeight = mode->height;
+            glfwWindowHint(GLFW_RED_BITS, mode->redBits);
+            glfwWindowHint(GLFW_GREEN_BITS, mode->greenBits);
+            glfwWindowHint(GLFW_BLUE_BITS, mode->blueBits);
+            glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
+        } else {
+            fullscreenMonitor = nullptr;
+        }
+    }
+
+    window = glfwCreateWindow(windowWidth, windowHeight, "", fullscreenMonitor, nullptr);
     if (!window) {
         glfwTerminate();
         return 1;
